@@ -462,11 +462,11 @@ ${this.escapeHtml(df.rawText)}
       <div class="hero-banner-dark">
         <div class="hero-lime-tag">
           <span class="ping-dot"></span>
-          <span>ระบบพร้อมสอบ 100% สรุปครบ 22 หมวด 106 หัวข้อ 119 สไลด์</span>
+          <span>ระบบพร้อมสอบ 100% สรุปครบ ${this.data.groups.length} หมวด ${allTopics.length} หัวข้อ ${totalDriveFiles} สไลด์</span>
         </div>
         <h1>CC1 x SonKy — ระบบเตรียมสอบใบประกอบวิชาชีพเภสัชกรรม</h1>
         <p>
-          คลังสรุปเนื้อหาเข้มข้นตรงตามเกณฑ์มาตรฐาน ศสภ. ครบทั้ง 16 กลุ่มโรค เภสัชภัณฑ์ เภสัชเคมี (SAR) การควบคุมคุณภาพ สมุนไพร และกฎหมายวิชาชีพ แยกอ่าน 1 สไลด์/1 โรค = 1 บทเดี่ยว พร้อมตาราง QuickRx ยาแม่บท และเชื่อมโยงไฟล์สไลด์ต้นฉบับ
+          คลังสรุปเนื้อหาเข้มข้นตรงตามเกณฑ์มาตรฐาน ศสภ. ครบทั้ง 16 กลุ่มโรค เภสัชภัณฑ์ เภสัชเคมี (SAR) การควบคุมคุณภาพ สมุนไพร กฎหมายวิชาชีพ และเล่มเขียว OSPE CC2 แยกอ่านเป็นบทเดี่ยวพร้อมตาราง QuickRx ยาแม่บทและภาพประกอบ
         </p>
         <div class="hero-dark-watermark"><img src="logo-mark.png" alt="" class="hero-watermark-img"></div>
       </div>
@@ -476,8 +476,8 @@ ${this.escapeHtml(df.rawText)}
         <div class="metric-card-modern">
           <div class="metric-left-col">
             <span class="metric-label-clean">หมวดวิชาทั้งหมด</span>
-            <span class="metric-val-clean">22</span>
-            <span class="metric-sub-clean" style="color: #d97706;">✓ โครงสร้างมาตรฐาน ศสภ.</span>
+            <span class="metric-val-clean">${this.data.groups.length}</span>
+            <span class="metric-sub-clean" style="color: #d97706;">✓ มาตรฐาน ศสภ. + เล่มเขียว</span>
           </div>
           <div class="metric-badge-icon icon-amber">📚</div>
         </div>
@@ -485,8 +485,8 @@ ${this.escapeHtml(df.rawText)}
         <div class="metric-card-modern">
           <div class="metric-left-col">
             <span class="metric-label-clean">บทสรุปเจาะลึกในระบบ</span>
-            <span class="metric-val-clean">106</span>
-            <span class="metric-sub-clean" style="color: #2563eb;">✓ 1.89 ล้านตัวอักษร</span>
+            <span class="metric-val-clean">${allTopics.length}</span>
+            <span class="metric-sub-clean" style="color: #2563eb;">✓ ครบ 22 หมวด + เล่มเขียว 8 บท</span>
           </div>
           <div class="metric-badge-icon icon-blue">📖</div>
         </div>
@@ -525,7 +525,7 @@ ${this.escapeHtml(df.rawText)}
             <h3 style="font-size: 1.15rem; font-weight: 700; margin: 0; color: var(--text-primary);">
               ความคืบหน้าการจัดตารางอ่านรายหมวด
             </h3>
-            <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">22 หมวดวิชา</span>
+            <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">${this.data.groups.length} หมวดวิชา</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 0.45rem;">
             ${this.data.groups.map((g, gi) => {
