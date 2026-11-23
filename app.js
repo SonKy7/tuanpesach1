@@ -659,10 +659,11 @@ ${this.escapeHtml(df.rawText)}
             const yText = typeof y === 'string' ? y : ((y && ((y.title || '') + ' ' + (y.text || ''))) || '');
             return yText.toLowerCase().includes(query);
           });
+          const matchCheat = t.cheatSheet ? JSON.stringify(t.cheatSheet).toLowerCase().includes(query) : false;
           const matchSection = (t.sections || []).some(s => ((s.heading || s.title || '').toLowerCase().includes(query)) || (s.html || '').toLowerCase().includes(query));
           const matchSummary = (t.quickSummaryHtml || '').toLowerCase().includes(query);
           const matchQuickRx = (t.quickRx && typeof t.quickRx === 'object' ? ((t.quickRx.title || '') + ' ' + (t.quickRx.html || '')).toLowerCase().includes(query) : false);
-          if (matchTitle || matchHighYield || matchSection || matchSummary || matchQuickRx) {
+          if (matchTitle || matchHighYield || matchCheat || matchSection || matchSummary || matchQuickRx) {
             hits.push(t);
           }
         });
@@ -1198,40 +1199,256 @@ ${this.escapeHtml(df.rawText)}
 
   // ================= VIEW: ALL HIGH-YIELD CHEAT SHEET =================
   renderCheatSheet(c) {
-    c.innerHTML = `
-      <div class="card" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.25rem;">
-        <div>
-          <h1 style="font-size: 1.75rem; font-weight: 700; color: var(--primary);">
-            ⚡ สรุปรวมจุดเน้น High-Yield ก่อนเข้าห้องสอบ (ครบทุกบท)
-          </h1>
-          <p style="color: var(--text-secondary);">
-            รวบรวมเฉพาะประเด็นสำคัญที่ออกสอบบ่อยที่สุดของทุกกลุ่มโรค ผลิตภัณฑ์ เภสัชเคมี และกฎหมาย สำหรับกวาดตาทบทวนเร็ว ๆ
-          </p>
-        </div>
-        <button class="btn btn-outline no-print" onclick="window.print()">🖨️ พิมพ์สรุป High-Yield ทั้งหมด</button>
-      </div>
+    const groups = this.data.groups || [];
+    const totalTopics = groups.reduce((acc, g) => acc + (g.topics || []).length, 0);
+    const kindIcons = {
+      criteria: '🎯',
+      mechanism: '⚙️',
+      signature: '💊',
+      trap: '⚠️'
+    };
 
-      ${this.data.groups.map((g, gIdx) => `
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 0.8rem; color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 0.4rem;">
-            ${g.icon} ${g.groupName}
-          </h2>
-          <div style="display: flex; flex-direction: column; gap: 1rem;">
-            ${g.topics.map(t => `
-              <div style="padding: 0.75rem 1rem; background: var(--bg-primary); border-radius: var(--radius-sm); border-left: 4px solid var(--primary);">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.4rem;">
-                  <h3 style="font-size: 1.15rem; font-weight: 700;">${t.title}</h3>
-                  <a href="#/summary?topic=${t.id}" class="btn btn-secondary no-print" style="padding: 0.25rem 0.65rem; font-size: 0.85rem;">อ่านตารางเต็ม + ชีท Drive →</a>
-                </div>
-                <ul style="padding-left: 1.3rem;">
-                  ${(t.highYield || []).map(hy => `<li style="margin-bottom: 0.3rem;">${hy}</li>`).join('')}
-                </ul>
-              </div>
-            `).join('')}
+    const shortPillLabel = (g) => {
+      const m = (g.groupName || '').match(/^Chapter\s+\d+\s+([^(]+)/i);
+      if (m) return `${g.icon} ${m[1].trim()}`;
+      const map = {
+        herbal: 'สมุนไพร',
+        medchem: 'MedChem',
+        pharmaceutics: 'เภสัชกรรม',
+        qc: 'QC',
+        pk: 'PK/PD',
+        social: 'กฎหมาย/สังคม',
+        green_book: 'เล่มเขียว'
+      };
+      return `${g.icon} ${map[g.group] || (g.groupName || '').split('(')[0].trim()}`;
+    };
+
+    const stripHtmlText = (html) => (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    const buildTopicSearchText = (g, t) => {
+      const parts = [g.groupName, g.group, t.title, t.titleTh];
+      if (t.cheatSheet) {
+        parts.push(stripHtmlText(t.cheatSheet.tagline));
+        (t.cheatSheet.blocks || []).forEach(b => {
+          parts.push(stripHtmlText(b.label));
+          (b.items || []).forEach(it => parts.push(stripHtmlText(it)));
+        });
+        if (t.cheatSheet.compareTable) {
+          parts.push(stripHtmlText(t.cheatSheet.compareTable.title));
+          (t.cheatSheet.compareTable.headers || []).forEach(h => parts.push(stripHtmlText(h)));
+          (t.cheatSheet.compareTable.rows || []).forEach(r => r.forEach(cell => parts.push(stripHtmlText(cell))));
+        }
+      } else {
+        (t.highYield || []).forEach(y => {
+          parts.push(typeof y === 'string' ? stripHtmlText(y) : ((y && ((y.title || '') + ' ' + (y.text || ''))) || ''));
+        });
+      }
+      return parts.filter(Boolean).join(' ').toLowerCase();
+    };
+
+    const renderTopicBody = (t) => {
+      const cs = t.cheatSheet;
+      if (!cs) {
+        return `
+          <ul class="cs-block-list">
+            ${(t.highYield || []).map(hy => {
+              const txt = typeof hy === 'string' ? hy : `<b>${hy.title || ''}</b> ${hy.text || ''}`;
+              return `<li>${txt}</li>`;
+            }).join('')}
+          </ul>
+        `;
+      }
+      const blocksHtml = (cs.blocks || []).map(b => {
+        const kind = kindIcons[b.kind] ? b.kind : 'criteria';
+        const rawLabel = b.label || '';
+        const hasLeadingIcon = /^(?:🎯|⚙️|💊|⚠️|★)/.test(rawLabel.trim());
+        return `
+          <div class="cs-block cs-kind-${kind}">
+            <div class="cs-block-label">${hasLeadingIcon ? rawLabel : `${kindIcons[kind]} ${rawLabel}`}</div>
+            <ul class="cs-block-list">
+              ${(b.items || []).map(it => `<li>${it}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+      }).join('');
+
+      const ct = cs.compareTable;
+      const tableHtml = ct && (ct.rows || []).length ? `
+        <div class="cs-compare-wrap table-responsive">
+          ${ct.title ? `<div class="cs-compare-title">${ct.title}</div>` : ''}
+          <table class="cs-compare-table">
+            <thead>
+              <tr>${(ct.headers || []).map(h => `<th>${h}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${(ct.rows || []).map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : '';
+
+      return `
+        ${cs.tagline ? `<div class="cs-tagline">${cs.tagline}</div>` : ''}
+        <div class="cs-blocks-grid">${blocksHtml}</div>
+        ${tableHtml}
+      `;
+    };
+
+    c.innerHTML = `
+      <div class="card cs-toolbar">
+        <div class="cs-toolbar-top">
+          <div>
+            <h1 class="cs-toolbar-title">⚡ สรุปรวมจุดเด่น &amp; เกณฑ์ตัดสินสอบสภา</h1>
+            <p class="cs-toolbar-sub">คัดเฉพาะเกณฑ์วินิจฉัย · คะแนน/การแบ่งระดับ · กลไกหลัก · จุดต่างยาแต่ละตัว และกับดักข้อสอบ (${groups.length} หมวด · ${totalTopics} บท)</p>
+          </div>
+          <div class="cs-toolbar-actions no-print">
+            <button type="button" class="cs-action-btn" id="csExpandAllBtn">กางทั้งหมด</button>
+            <button type="button" class="cs-action-btn" id="csCollapseAllBtn">ย่อทั้งหมด</button>
+            <button type="button" class="btn btn-outline" style="padding: 0.4rem 0.8rem; font-size: 0.84rem;" onclick="window.print()">🖨️ พิมพ์สรุป</button>
           </div>
         </div>
-      `).join('')}
+
+        <div class="cs-filter-row no-print">
+          <div class="cs-search-wrap">
+            <input type="search" id="csFilterInput" class="cs-search-input" placeholder="🔍 ค้นหาชื่อยา, เกณฑ์คะแนน, กลไก, SAR, Cutoff (เช่น CHA2DS2, Tetrazole, GOLD, CrCl)..." autocomplete="off">
+          </div>
+          <span class="cs-match-badge" id="csMatchBadge">แสดง ${totalTopics} / ${totalTopics} บท</span>
+        </div>
+
+        <div class="cs-pill-strip no-print" id="csPillStrip">
+          <button type="button" class="cs-group-pill active" data-cs-group="all">ทั้งหมด (${groups.length})</button>
+          ${groups.map((g, gi) => `
+            <button type="button" class="cs-group-pill" data-cs-group="${g.group}">${shortPillLabel(g)} (${(g.topics || []).length})</button>
+          `).join('')}
+        </div>
+      </div>
+
+      <div id="csEmptyState" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
+        ไม่พบหัวข้อที่ตรงกับคำค้นหรือหมวดที่เลือก
+      </div>
+
+      <div id="csGroupsContainer">
+        ${groups.map(g => {
+          const gTopics = g.topics || [];
+          return `
+            <section class="card cs-group-card" data-cs-group="${g.group}">
+              <button type="button" class="cs-group-header" aria-expanded="true">
+                <h2 class="cs-group-title">
+                  <span>${g.icon}</span>
+                  <span>${g.groupName}</span>
+                </h2>
+                <span class="cs-group-meta">
+                  <span class="cs-group-count">${gTopics.length} บท</span>
+                  <span class="cs-chevron no-print">▾</span>
+                </span>
+              </button>
+              <div class="cs-group-body">
+                ${gTopics.map(t => `
+                  <article class="cs-topic-card" data-search="${this.escapeHtml(buildTopicSearchText(g, t))}">
+                    <div class="cs-topic-head">
+                      <h3 class="cs-topic-title">${t.title}</h3>
+                      <div class="cs-topic-links no-print">
+                        <a href="#/quick-rx?topic=${t.id}" class="cs-mini-link">QuickRx</a>
+                        <a href="#/summary?topic=${t.id}" class="cs-mini-link">เนื้อหาเต็ม</a>
+                      </div>
+                    </div>
+                    ${renderTopicBody(t)}
+                  </article>
+                `).join('')}
+              </div>
+            </section>
+          `;
+        }).join('')}
+      </div>
     `;
+
+    // Wire interactive filter, group pills, and accordions
+    const filterInput = document.getElementById('csFilterInput');
+    const pillStrip = document.getElementById('csPillStrip');
+    const matchBadge = document.getElementById('csMatchBadge');
+    const emptyState = document.getElementById('csEmptyState');
+    const groupCards = Array.from(c.querySelectorAll('.cs-group-card'));
+    let activeGroup = 'all';
+
+    const applyFilter = () => {
+      const q = (filterInput?.value || '').trim().toLowerCase();
+      let visibleTopics = 0;
+
+      groupCards.forEach(gc => {
+        const gKey = gc.getAttribute('data-cs-group');
+        const groupMatch = activeGroup === 'all' || gKey === activeGroup;
+        const topicCards = Array.from(gc.querySelectorAll('.cs-topic-card'));
+        let groupVisible = 0;
+
+        topicCards.forEach(tc => {
+          const hay = tc.getAttribute('data-search') || '';
+          const match = groupMatch && (!q || hay.includes(q));
+          tc.classList.toggle('cs-hidden', !match);
+          if (match) {
+            groupVisible++;
+            visibleTopics++;
+          }
+        });
+
+        gc.classList.toggle('cs-hidden', groupVisible === 0);
+        const countEl = gc.querySelector('.cs-group-count');
+        if (countEl) {
+          countEl.textContent = q ? `${groupVisible}/${topicCards.length} บท` : `${topicCards.length} บท`;
+        }
+        // Auto-expand matched groups when actively searching or filtering single group
+        if ((q || activeGroup !== 'all') && groupVisible > 0) {
+          const hdr = gc.querySelector('.cs-group-header');
+          const body = gc.querySelector('.cs-group-body');
+          const chev = gc.querySelector('.cs-chevron');
+          if (hdr) hdr.setAttribute('aria-expanded', 'true');
+          if (body) body.classList.remove('cs-collapsed');
+          if (chev) chev.textContent = '▾';
+        }
+      });
+
+      if (matchBadge) matchBadge.textContent = `แสดง ${visibleTopics} / ${totalTopics} บท`;
+      if (emptyState) emptyState.style.display = visibleTopics === 0 ? 'block' : 'none';
+    };
+
+    pillStrip?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.cs-group-pill');
+      if (!btn) return;
+      activeGroup = btn.getAttribute('data-cs-group') || 'all';
+      pillStrip.querySelectorAll('.cs-group-pill').forEach(b => {
+        b.classList.toggle('active', b === btn);
+      });
+      applyFilter();
+    });
+
+    filterInput?.addEventListener('input', applyFilter);
+
+    groupCards.forEach(gc => {
+      const hdr = gc.querySelector('.cs-group-header');
+      const body = gc.querySelector('.cs-group-body');
+      const chev = gc.querySelector('.cs-chevron');
+      hdr?.addEventListener('click', () => {
+        const expanded = hdr.getAttribute('aria-expanded') === 'true';
+        hdr.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        body?.classList.toggle('cs-collapsed', expanded);
+        if (chev) chev.textContent = expanded ? '▸' : '▾';
+      });
+    });
+
+    const setAllExpanded = (expand) => {
+      groupCards.forEach(gc => {
+        const hdr = gc.querySelector('.cs-group-header');
+        const body = gc.querySelector('.cs-group-body');
+        const chev = gc.querySelector('.cs-chevron');
+        if (hdr) hdr.setAttribute('aria-expanded', expand ? 'true' : 'false');
+        if (body) body.classList.toggle('cs-collapsed', !expand);
+        if (chev) chev.textContent = expand ? '▾' : '▸';
+      });
+    };
+
+    document.getElementById('csExpandAllBtn')?.addEventListener('click', () => setAllExpanded(true));
+    document.getElementById('csCollapseAllBtn')?.addEventListener('click', () => setAllExpanded(false));
+
+    this.enhanceAbbreviations(c);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
