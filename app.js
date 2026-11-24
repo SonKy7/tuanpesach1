@@ -1299,7 +1299,7 @@ ${this.escapeHtml(df.rawText)}
         <div class="cs-toolbar-top">
           <div>
             <h1 class="cs-toolbar-title">⚡ สรุปรวมจุดเด่น &amp; เกณฑ์ตัดสินสอบสภา</h1>
-            <p class="cs-toolbar-sub">คัดเฉพาะเกณฑ์วินิจฉัย · คะแนน/การแบ่งระดับ · กลไกหลัก · จุดต่างยาแต่ละตัว และกับดักข้อสอบ (${groups.length} หมวด · ${totalTopics} บท)</p>
+            <p class="cs-toolbar-sub">คัดเฉพาะเกณฑ์วินิจฉัย · คะแนน/การแบ่งระดับ · กลุ่มยา (ตัวอย่าง) &amp; กลไกลูกศร (→) · จุดต่างรายตัว และกับดักสอบ (${groups.length} หมวด · ${totalTopics} บท)</p>
           </div>
           <div class="cs-toolbar-actions no-print">
             <button type="button" class="cs-action-btn" id="csExpandAllBtn">กางทั้งหมด</button>
