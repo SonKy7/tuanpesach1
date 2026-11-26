@@ -7,6 +7,8 @@ const App = {
     readTopics: {},
     bookmarkedTopics: {},
     expandedHomeGroups: {},
+    quizAnswers: {},
+    quizFilter: 'all',
     fontScale: 1,
     inPageFind: {
       isOpen: false,
@@ -63,6 +65,7 @@ const App = {
           <a href="#/quick-rx?topic=${currentId}" class="drawer-nav-item ${isQuick ? 'active' : ''}">สรุป</a>
           <a href="#/drive" class="drawer-nav-item ${this.state.route === 'drive' ? 'active' : ''}">Drive</a>
           <a href="#/cheatsheet" class="drawer-nav-item ${this.state.route === 'cheatsheet' ? 'active' : ''}">สรุปรวม</a>
+          <a href="#/quiz" class="drawer-nav-item ${this.state.route === 'quiz' ? 'active' : ''}">📝 ข้อสอบแยกบท</a>
           <a href="https://rx-practice-ple-cc1-2026.lushlarch17.chatgpt.site/" target="_blank" rel="noopener" class="drawer-nav-item" style="color: #059669; font-weight: 600;">ทำข้อสอบ CC1 ↗</a>
           <a href="https://jame0854117312-blip.github.io/cc2-app/" target="_blank" rel="noopener" class="drawer-nav-item" style="color: #7c3aed; font-weight: 600;">OSPE CC2 ↗</a>
         </div>
@@ -130,6 +133,7 @@ const App = {
     try {
       this.state.readTopics = JSON.parse(localStorage.getItem('cc1.readTopics') || '{}');
       this.state.bookmarkedTopics = JSON.parse(localStorage.getItem('cc1.bookmarkedTopics') || '{}');
+      this.state.quizAnswers = JSON.parse(localStorage.getItem('cc1.quizAnswers') || '{}');
       const savedScale = parseFloat(localStorage.getItem('cc1.fontScale') || '1');
       if (savedScale >= 0.9 && savedScale <= 1.35) {
         this.state.fontScale = savedScale;
@@ -138,7 +142,14 @@ const App = {
     } catch (e) {
       this.state.readTopics = {};
       this.state.bookmarkedTopics = {};
+      this.state.quizAnswers = {};
     }
+  },
+
+  saveQuizAnswers() {
+    try {
+      localStorage.setItem('cc1.quizAnswers', JSON.stringify(this.state.quizAnswers || {}));
+    } catch (e) {}
   },
 
   toggleRead(topicId) {
@@ -372,6 +383,7 @@ ${this.escapeHtml(df.rawText)}
     navLinks.forEach(a => a.classList.remove('active'));
 
     const container = document.getElementById('app');
+    if (this.clearQuizKeyHandler) this.clearQuizKeyHandler();
 
     if (path === '/' || path === '') {
       this.highlightNav('home');
@@ -397,6 +409,16 @@ ${this.escapeHtml(df.rawText)}
     } else if (path.startsWith('/cheatsheet')) {
       this.highlightNav('cheatsheet');
       this.renderCheatSheet(container);
+    } else if (path.startsWith('/quiz')) {
+      this.highlightNav('quiz');
+      const params = new URLSearchParams(query);
+      const chapterId = params.get('chapter');
+      const qNo = parseInt(params.get('q') || '0', 10);
+      if (chapterId) {
+        this.renderQuizRunner(container, chapterId, qNo);
+      } else {
+        this.renderQuizHub(container);
+      }
     } else {
       this.highlightNav('home');
       this.renderHome(container);
@@ -446,6 +468,9 @@ ${this.escapeHtml(df.rawText)}
           </span>
         </div>
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+          <a href="#/quiz" class="btn btn-secondary" style="border-radius: 9999px; padding: 0.45rem 1rem; font-size: 0.88rem; font-weight: 700;">
+            📝 ข้อสอบแยกบท (20 บท)
+          </a>
           <a href="#/drive" class="btn btn-secondary" style="border-radius: 9999px; padding: 0.45rem 1rem; font-size: 0.88rem;">
             📁 คลังชีท Drive (${totalDriveFolders})
           </a>
@@ -593,8 +618,24 @@ ${this.escapeHtml(df.rawText)}
           </div>
         </div>
 
-        <!-- Right: Companion Apps -->
+        <!-- Right: Quiz Bank & Companion Apps -->
         <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+          <div class="card" style="padding: 1.55rem 1.75rem; border-color: var(--border-hover);">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.55rem;">
+              <h3 style="font-size: 1.12rem; font-weight: 800; margin: 0; color: var(--text-primary);">
+                📝 ข้อสอบแยกบท (สนภท. PLE-CC1)
+              </h3>
+              <span class="qz-stat-pill" style="font-size: 0.78rem; padding: 0.22rem 0.62rem;">
+                ${(window.CC1_QUIZ_DATA?.totalQuestions || 765)} ข้อ
+              </span>
+            </div>
+            <p style="font-size: 0.86rem; color: var(--text-secondary); margin: 0 0 0.9rem 0; line-height: 1.5;">
+              เลือกทำข้อสอบแยก 20 บท ติ๊กตัวเลือกแล้วตรวจเฉลย+เหตุผลทันที พร้อมรูปโครงสร้างเคมีและกรณีศึกษา
+            </p>
+            <a href="#/quiz" class="btn-dark-pill" style="width: 100%; justify-content: center; font-size: 0.9rem;">
+              เลือกบททำข้อสอบ
+            </a>
+          </div>
           <!-- Companion Apps Card -->
           <div class="card" style="padding: 1.75rem 2rem;">
             <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.65rem; color: var(--text-primary);">
@@ -1665,6 +1706,430 @@ ${this.escapeHtml(df.rawText)}
     countEl.classList.toggle('is-empty', hasQuery && total === 0);
     if (prevBtn) prevBtn.disabled = total === 0;
     if (nextBtn) nextBtn.disabled = total === 0;
+  },
+
+  clearQuizKeyHandler() {
+    if (this._quizKeyHandler) {
+      window.removeEventListener('keydown', this._quizKeyHandler);
+      this._quizKeyHandler = null;
+    }
+  },
+
+  getChapterQuizStats(ch) {
+    const qs = ch.questions || [];
+    const ans = this.state.quizAnswers || {};
+    let done = 0;
+    let correct = 0;
+    qs.forEach(q => {
+      if (typeof ans[q.id] === 'number') {
+        done++;
+        if (ans[q.id] === q.answerIdx) correct++;
+      }
+    });
+    return {
+      total: qs.length,
+      done,
+      correct,
+      wrong: done - correct
+    };
+  },
+
+  renderQuizHub(c) {
+    const qData = window.CC1_QUIZ_DATA || { chapters: [], totalQuestions: 0 };
+    const chapters = qData.chapters || [];
+    const answers = this.state.quizAnswers || {};
+
+    let totalQ = 0;
+    let totalDone = 0;
+    let totalCorrect = 0;
+    chapters.forEach(ch => {
+      const st = this.getChapterQuizStats(ch);
+      totalQ += st.total;
+      totalDone += st.done;
+      totalCorrect += st.correct;
+    });
+
+    const clinicalCount = chapters.filter(ch => ch.category === 'clinical').length;
+    const pharmCount = chapters.filter(ch => ch.category === 'pharm').length;
+
+    c.innerHTML = `
+      <div class="card qz-header-card">
+        <div class="qz-header-top">
+          <div>
+            <h1 class="qz-title">📝 ข้อสอบแยกบท (PLE-CC1)</h1>
+            <p class="qz-sub">จากคู่มือเตรียมสอบ สนภท. ครบ ${chapters.length} บท (${totalQ} ข้อ) · ติ๊กตัวเลือกปุ๊ป ตรวจถูก-ผิด พร้อมเหตุผลเฉลยทันที</p>
+          </div>
+          <div class="qz-stats-strip">
+            <span class="qz-stat-pill">ทำแล้ว ${totalDone} / ${totalQ} ข้อ</span>
+            <span class="qz-stat-pill is-success">✓ ถูก ${totalCorrect}</span>
+            <span class="qz-stat-pill is-danger">✕ ผิด ${totalDone - totalCorrect}</span>
+            ${totalDone > 0 ? `<button type="button" class="cs-action-btn" id="qzResetAllBtn">ล้างทั้งหมด</button>` : ''}
+          </div>
+        </div>
+
+        <div class="qz-filter-bar">
+          <div class="cs-search-wrap" style="flex: 1 1 240px;">
+            <input type="search" id="qzChSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาชื่อบทหรือเนื้อหาข้อสอบ (เช่น หัวใจ, ติดเชื้อ, เภสัชวิเคราะห์, PK)..." autocomplete="off">
+          </div>
+          <div class="qz-cat-pills" id="qzCatPills">
+            <button type="button" class="cs-group-pill active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
+            <button type="button" class="cs-group-pill" data-qz-cat="clinical">โรคและเภสัชบำบัด (${clinicalCount})</button>
+            <button type="button" class="cs-group-pill" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="qzEmptyHub" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
+        ไม่พบบทข้อสอบที่ตรงกับคำค้นหา
+      </div>
+
+      <div class="qz-chapter-grid" id="qzChapterGrid">
+        ${chapters.map(ch => {
+          const st = this.getChapterQuizStats(ch);
+          const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
+          const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
+          const nextUnanswered = (ch.questions || []).find(q => typeof answers[q.id] !== 'number');
+          const startNo = nextUnanswered ? nextUnanswered.no : 1;
+          const btnLabel = st.done === 0 ? 'เริ่มทำข้อสอบ' : (st.done < st.total ? `ทำต่อข้อที่ ${startNo}` : 'ทบทวนข้อสอบ');
+          const searchBlob = `${ch.chapterNum} ${ch.title} ${ch.id} ${(ch.questions || []).slice(0, 8).map(q => q.subtopic || '').join(' ')}`.toLowerCase();
+          return `
+            <article class="qz-ch-card" data-qz-cat="${ch.category}" data-qz-search="${this.escapeHtml(searchBlob)}">
+              <div>
+                <div class="qz-ch-head">
+                  <div class="qz-ch-num">${ch.icon}</div>
+                  <div style="min-width: 0; flex: 1;">
+                    <h2 class="qz-ch-title">บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</h2>
+                    <div class="qz-ch-meta">
+                      <span>${st.total} ข้อ</span>
+                      ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done} ข้อ</span>` : '<span>· ยังไม่ได้ทำ</span>'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="qz-ch-prog-wrap">
+                <div class="qz-ch-prog-row">
+                  <span>คืบหน้า ${st.done}/${st.total}</span>
+                  <span>${st.total ? Math.round((st.done / st.total) * 100) : 0}%</span>
+                </div>
+                <div class="qz-prog-track" aria-hidden="true">
+                  <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
+                  <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
+                </div>
+              </div>
+              <div class="qz-ch-actions">
+                <a href="#/quiz?chapter=${ch.id}&q=${startNo}" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.86rem;">
+                  ${btnLabel}
+                </a>
+                ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-qz-clear-ch="${ch.id}" title="ล้างคำตอบบทนี้">รีเซ็ต</button>` : ''}
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    // Wire search + category filter + reset
+    const searchInput = document.getElementById('qzChSearchInput');
+    const catPills = document.getElementById('qzCatPills');
+    const cards = Array.from(c.querySelectorAll('.qz-ch-card'));
+    const emptyEl = document.getElementById('qzEmptyHub');
+    let activeCat = 'all';
+
+    const applyHubFilter = () => {
+      const q = (searchInput?.value || '').trim().toLowerCase();
+      let shown = 0;
+      cards.forEach(card => {
+        const catOk = activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat;
+        const txtOk = !q || (card.getAttribute('data-qz-search') || '').includes(q);
+        const vis = catOk && txtOk;
+        card.classList.toggle('is-hidden', !vis);
+        if (vis) shown++;
+      });
+      if (emptyEl) emptyEl.style.display = shown === 0 ? 'block' : 'none';
+    };
+
+    searchInput?.addEventListener('input', applyHubFilter);
+    catPills?.querySelectorAll('.cs-group-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeCat = btn.getAttribute('data-qz-cat') || 'all';
+        catPills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
+        applyHubFilter();
+      });
+    });
+
+    c.querySelectorAll('[data-qz-clear-ch]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cid = btn.getAttribute('data-qz-clear-ch');
+        const targetCh = chapters.find(x => x.id === cid);
+        if (!targetCh) return;
+        targetCh.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
+        this.saveQuizAnswers();
+        this.renderQuizHub(c);
+      });
+    });
+
+    document.getElementById('qzResetAllBtn')?.addEventListener('click', () => {
+      if (!window.confirm('ต้องการล้างประวัติการทำข้อสอบทั้งหมดใช่หรือไม่?')) return;
+      this.state.quizAnswers = {};
+      this.saveQuizAnswers();
+      this.renderQuizHub(c);
+    });
+  },
+
+  renderQuizRunner(c, chapterId, qNumParam) {
+    const qData = window.CC1_QUIZ_DATA || { chapters: [] };
+    const ch = (qData.chapters || []).find(x => x.id === chapterId) || (qData.chapters || [])[0];
+    if (!ch) {
+      this.renderQuizHub(c);
+      return;
+    }
+
+    const qs = ch.questions || [];
+    let filterMode = this.state.quizFilter || 'all'; // 'all' | 'todo' | 'wrong'
+    const getFilteredQs = () => {
+      const ans = this.state.quizAnswers || {};
+      if (filterMode === 'todo') return qs.filter(q => typeof ans[q.id] !== 'number');
+      if (filterMode === 'wrong') return qs.filter(q => typeof ans[q.id] === 'number' && ans[q.id] !== q.answerIdx);
+      return qs;
+    };
+
+    let currentNo = (qNumParam >= 1 && qNumParam <= qs.length) ? qNumParam : 1;
+    let showMap = false;
+
+    const renderBody = () => {
+      const ans = this.state.quizAnswers || {};
+      const st = this.getChapterQuizStats(ch);
+      const visibleQs = getFilteredQs();
+      let q = qs.find(x => x.no === currentNo) || qs[0];
+      if (visibleQs.length && !visibleQs.some(x => x.no === q.no)) {
+        q = visibleQs[0];
+        currentNo = q.no;
+      }
+
+      const selectedIdx = typeof ans[q.id] === 'number' ? ans[q.id] : null;
+      const isAnswered = selectedIdx !== null;
+      const isCorrect = isAnswered && selectedIdx === q.answerIdx;
+      const labels = q.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
+      const correctLabel = labels[q.answerIdx] || q.answerKey || '';
+
+      const visIdx = visibleQs.findIndex(x => x.no === q.no);
+      const prevQ = visIdx > 0 ? visibleQs[visIdx - 1] : null;
+      const nextQ = (visIdx >= 0 && visIdx + 1 < visibleQs.length) ? visibleQs[visIdx + 1] : null;
+
+      c.innerHTML = `
+        <div class="qz-runner-wrap">
+          <div class="qz-runner-topbar">
+            <div class="qz-topbar-row">
+              <a href="#/quiz" class="qz-back-btn">← เลือกบท</a>
+              <div class="qz-runner-ch-name">${ch.icon} บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</div>
+              <div class="qz-stats-strip">
+                <span class="qz-stat-pill is-success" id="qzTopOk">✓ ${st.correct}</span>
+                <span class="qz-stat-pill is-danger" id="qzTopBad">✕ ${st.wrong}</span>
+                <span class="qz-stat-pill" id="qzTopLeft">เหลือ ${st.total - st.done}</span>
+                <button type="button" class="cs-action-btn" id="qzToggleMapBtn" aria-expanded="${showMap}">${showMap ? 'ซ่อนเลขข้อ' : `เลือกข้อ (${q.no}/${st.total})`}</button>
+              </div>
+            </div>
+            ${showMap ? `
+              <div class="qz-nav-strip" id="qzNavStrip">
+                ${qs.map(item => {
+                  const ua = ans[item.id];
+                  let cls = 'qz-qdot';
+                  if (typeof ua === 'number') cls += (ua === item.answerIdx ? ' is-ok' : ' is-bad');
+                  if (item.no === q.no) cls += ' is-current';
+                  return `<button type="button" class="${cls}" data-qz-jump="${item.no}">${item.no}</button>`;
+                }).join('')}
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="qz-filter-modes">
+            <div class="qz-cat-pills">
+              <button type="button" class="cs-group-pill ${filterMode === 'all' ? 'active' : ''}" data-qz-mode="all">ทั้งหมด (${st.total})</button>
+              <button type="button" class="cs-group-pill ${filterMode === 'todo' ? 'active' : ''}" data-qz-mode="todo">ยังไม่ทำ (${st.total - st.done})</button>
+              <button type="button" class="cs-group-pill ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>
+            </div>
+            ${st.done > 0 ? `<button type="button" class="cs-action-btn" id="qzClearChRunnerBtn">ล้างคำตอบบทนี้</button>` : ''}
+          </div>
+
+          ${visibleQs.length === 0 ? `
+            <div class="card qz-q-card" style="text-align: center; padding: 2.2rem 1.25rem;">
+              <p style="font-size: 1.05rem; font-weight: 700; margin: 0 0 0.75rem 0;">
+                ${filterMode === 'wrong' ? '🎉 ไม่มีข้อที่ตอบผิดในบทนี้แล้ว' : '✅ ทำครบทุกข้อในบทนี้แล้ว'}
+              </p>
+              <button type="button" class="btn-dark-pill" data-qz-mode="all">แสดงข้อสอบทั้งหมด (${st.total} ข้อ)</button>
+            </div>
+          ` : `
+            <div class="card qz-q-card" id="qzActiveCard">
+              <div class="qz-q-head">
+                <span class="qz-q-badge">ข้อ ${q.no} / ${st.total}${q.origNo !== q.no ? ` (ข้อ ${q.origNo} ในบท)` : ''}</span>
+                ${q.subtopic ? `<span class="qz-subtopic-pill">${this.escapeHtml(q.subtopic)}</span>` : ''}
+              </div>
+
+              ${(q.caseText || (q.caseImages && q.caseImages.length)) ? `
+                <div class="qz-case-box">
+                  <div class="qz-case-label">📋 กรณีศึกษา / ข้อมูลประกอบโจทย์</div>
+                  ${q.caseText ? `<div>${this.escapeHtml(q.caseText)}</div>` : ''}
+                  ${(q.caseImages && q.caseImages.length) ? `
+                    <div class="qz-fig-wrap">
+                      ${q.caseImages.map(src => `<img src="${src}" alt="ภาพประกอบกรณีศึกษาข้อ ${q.no}" class="qz-fig-img" loading="lazy">`).join('')}
+                    </div>
+                  ` : ''}
+                </div>
+              ` : ''}
+
+              <div class="qz-stem">${this.escapeHtml(q.stem)}</div>
+
+              ${(q.images && q.images.length) ? `
+                <div class="qz-fig-wrap">
+                  ${q.images.map(src => `<img src="${src}" alt="ภาพประกอบคำถามข้อ ${q.no}" class="qz-fig-img">`).join('')}
+                </div>
+              ` : ''}
+
+              <div class="qz-options-list" role="radiogroup" aria-label="ตัวเลือกคำถามข้อ ${q.no}">
+                ${(q.options || []).map((optText, i) => {
+                  const key = labels[i] || String(i + 1);
+                  let optCls = 'qz-opt-btn';
+                  if (isAnswered) {
+                    if (i === q.answerIdx) optCls += ' is-correct-choice';
+                    else if (i === selectedIdx) optCls += ' is-wrong-choice';
+                    else optCls += ' is-dimmed';
+                  }
+                  return `
+                    <button type="button" class="${optCls}" data-qz-opt="${i}" ${isAnswered ? 'aria-disabled="true"' : ''}>
+                      <span class="qz-opt-key">${this.escapeHtml(key)}</span>
+                      <span class="qz-opt-text">${this.escapeHtml(optText)}</span>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+
+              ${isAnswered ? `
+                <div class="qz-feedback-card ${isCorrect ? 'is-ok' : 'is-bad'}" role="status" aria-live="polite">
+                  <div class="qz-feedback-banner">
+                    <span>${isCorrect ? `✓ ถูกต้อง! (ข้อ ${this.escapeHtml(correctLabel)})` : `✕ ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabel)}.`}</span>
+                    <button type="button" class="cs-action-btn" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.25rem 0.65rem;">ทำใหม่ข้อนี้</button>
+                  </div>
+                  <div class="qz-feedback-body">
+                    ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabel}`)}
+                    ${(q.expImages && q.expImages.length) ? `
+                      <div class="qz-fig-wrap" style="margin-top: 0.75rem; margin-bottom: 0;">
+                        ${q.expImages.map(src => `<img src="${src}" alt="ภาพประกอบเฉลยข้อ ${q.no}" class="qz-fig-img" loading="lazy">`).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              ` : ''}
+
+              <div class="qz-q-footer">
+                <button type="button" class="btn btn-secondary" id="qzPrevBtn" style="border-radius: 9999px;" ${prevQ ? '' : 'disabled'}>
+                  ← ข้อก่อนหน้า
+                </button>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">
+                  หน้า PDF ${q.pdfPage || '-'} · กดปุ่มตัวเลข 1-${(q.options || []).length} หรือ ←/→ ได้
+                </span>
+                <button type="button" class="btn-dark-pill" id="qzNextBtn" ${nextQ ? '' : 'disabled'}>
+                  ข้อถัดไป →
+                </button>
+              </div>
+            </div>
+          `}
+        </div>
+      `;
+
+      // Attach listeners
+      const activeCard = document.getElementById('qzActiveCard');
+      if (activeCard) this.enhanceAbbreviations(activeCard);
+
+      document.getElementById('qzToggleMapBtn')?.addEventListener('click', () => {
+        showMap = !showMap;
+        renderBody();
+      });
+
+      c.querySelectorAll('[data-qz-jump]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentNo = parseInt(btn.getAttribute('data-qz-jump'), 10);
+          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          renderBody();
+        });
+      });
+
+      c.querySelectorAll('[data-qz-mode]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          filterMode = btn.getAttribute('data-qz-mode') || 'all';
+          this.state.quizFilter = filterMode;
+          renderBody();
+        });
+      });
+
+      c.querySelectorAll('[data-qz-opt]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (typeof this.state.quizAnswers[q.id] === 'number') return;
+          const picked = parseInt(btn.getAttribute('data-qz-opt'), 10);
+          this.state.quizAnswers[q.id] = picked;
+          this.saveQuizAnswers();
+          renderBody();
+          requestAnimationFrame(() => {
+            document.querySelector('.qz-feedback-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          });
+        });
+      });
+
+      document.getElementById('qzRetryOneBtn')?.addEventListener('click', () => {
+        delete this.state.quizAnswers[q.id];
+        this.saveQuizAnswers();
+        renderBody();
+      });
+
+      document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
+        qs.forEach(item => { delete this.state.quizAnswers[item.id]; });
+        this.saveQuizAnswers();
+        filterMode = 'all';
+        this.state.quizFilter = 'all';
+        currentNo = 1;
+        renderBody();
+      });
+
+      document.getElementById('qzPrevBtn')?.addEventListener('click', () => {
+        if (!prevQ) return;
+        currentNo = prevQ.no;
+        window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+        renderBody();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      document.getElementById('qzNextBtn')?.addEventListener('click', () => {
+        if (!nextQ) return;
+        currentNo = nextQ.no;
+        window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+        renderBody();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      // Keyboard navigation (1-5 to pick option, Left/Right arrows for prev/next)
+      this.clearQuizKeyHandler();
+      this._quizKeyHandler = (e) => {
+        if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+        if (e.key === 'ArrowRight' && nextQ) {
+          currentNo = nextQ.no;
+          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          renderBody();
+        } else if (e.key === 'ArrowLeft' && prevQ) {
+          currentNo = prevQ.no;
+          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          renderBody();
+        } else if (/^[1-5]$/.test(e.key) && typeof this.state.quizAnswers[q.id] !== 'number') {
+          const idx = parseInt(e.key, 10) - 1;
+          if (idx >= 0 && idx < (q.options || []).length) {
+            this.state.quizAnswers[q.id] = idx;
+            this.saveQuizAnswers();
+            renderBody();
+          }
+        }
+      };
+      window.addEventListener('keydown', this._quizKeyHandler);
+    };
+
+    renderBody();
   },
 
   setupAbbrTooltip() {
