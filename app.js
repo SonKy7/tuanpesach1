@@ -9,6 +9,13 @@ const App = {
     expandedHomeGroups: {},
     quizAnswers: {},
     quizFilter: 'all',
+    quizShuffle: {},
+    quizShuffleOn: true,
+    quizHubTab: 'chapter',
+    quizExamMode: 'instant', // 'instant' | 'sim'
+    quizTimerOn: false,
+    quizTimerSec: 0,
+    quizRandomSession: null,
     fontScale: 1,
     inPageFind: {
       isOpen: false,
@@ -65,7 +72,7 @@ const App = {
           <a href="#/quick-rx?topic=${currentId}" class="drawer-nav-item ${isQuick ? 'active' : ''}">สรุป</a>
           <a href="#/drive" class="drawer-nav-item ${this.state.route === 'drive' ? 'active' : ''}">Drive</a>
           <a href="#/cheatsheet" class="drawer-nav-item ${this.state.route === 'cheatsheet' ? 'active' : ''}">สรุปรวม</a>
-          <a href="#/quiz" class="drawer-nav-item ${this.state.route === 'quiz' ? 'active' : ''}">📝 ข้อสอบแยกบท</a>
+          <a href="#/quiz" class="drawer-nav-item ${this.state.route === 'quiz' ? 'active' : ''}">📝 คลังข้อสอบ & สุ่มข้อสอบ</a>
           <a href="https://rx-practice-ple-cc1-2026.lushlarch17.chatgpt.site/" target="_blank" rel="noopener" class="drawer-nav-item" style="color: #059669; font-weight: 600;">ทำข้อสอบ CC1 ↗</a>
           <a href="https://jame0854117312-blip.github.io/cc2-app/" target="_blank" rel="noopener" class="drawer-nav-item" style="color: #7c3aed; font-weight: 600;">OSPE CC2 ↗</a>
         </div>
@@ -134,6 +141,9 @@ const App = {
       this.state.readTopics = JSON.parse(localStorage.getItem('cc1.readTopics') || '{}');
       this.state.bookmarkedTopics = JSON.parse(localStorage.getItem('cc1.bookmarkedTopics') || '{}');
       this.state.quizAnswers = JSON.parse(localStorage.getItem('cc1.quizAnswers') || '{}');
+      this.state.quizShuffle = JSON.parse(localStorage.getItem('cc1.quizShuffle') || '{}');
+      const savedShufOn = localStorage.getItem('cc1.quizShuffleOn');
+      if (savedShufOn !== null) this.state.quizShuffleOn = savedShufOn === 'true';
       const savedScale = parseFloat(localStorage.getItem('cc1.fontScale') || '1');
       if (savedScale >= 0.9 && savedScale <= 1.35) {
         this.state.fontScale = savedScale;
@@ -143,12 +153,20 @@ const App = {
       this.state.readTopics = {};
       this.state.bookmarkedTopics = {};
       this.state.quizAnswers = {};
+      this.state.quizShuffle = {};
     }
   },
 
   saveQuizAnswers() {
     try {
       localStorage.setItem('cc1.quizAnswers', JSON.stringify(this.state.quizAnswers || {}));
+    } catch (e) {}
+  },
+
+  saveQuizPrefs() {
+    try {
+      localStorage.setItem('cc1.quizShuffle', JSON.stringify(this.state.quizShuffle || {}));
+      localStorage.setItem('cc1.quizShuffleOn', String(!!this.state.quizShuffleOn));
     } catch (e) {}
   },
 
@@ -401,6 +419,7 @@ ${this.escapeHtml(df.rawText)}
       const params = new URLSearchParams(query);
       const defaultTopic = this.state.currentTopicId || this.getFirstLectureTopic().id;
       const targetTopic = params.get('topic') || defaultTopic;
+      this._pendingDeepLink = params.get('hl') || params.get('sec') || '';
       this.renderSummary(container, targetTopic);
     } else if (path.startsWith('/drive')) {
       this.highlightNav('drive');
@@ -413,8 +432,19 @@ ${this.escapeHtml(df.rawText)}
       this.highlightNav('quiz');
       const params = new URLSearchParams(query);
       const chapterId = params.get('chapter');
+      const yearId = params.get('year');
+      const dayParam = params.get('day') || 'all';
+      const isRandom = params.get('random') === '1';
+      const tabParam = params.get('tab');
+      if (tabParam && ['chapter', 'year', 'random'].includes(tabParam)) {
+        this.state.quizHubTab = tabParam;
+      }
       const qNo = parseInt(params.get('q') || '0', 10);
-      if (chapterId) {
+      if (isRandom) {
+        this.renderRandomQuizRunner(container, qNo);
+      } else if (yearId) {
+        this.renderPastExamRunner(container, yearId, dayParam, qNo);
+      } else if (chapterId) {
         this.renderQuizRunner(container, chapterId, qNo);
       } else {
         this.renderQuizHub(container);
@@ -469,7 +499,7 @@ ${this.escapeHtml(df.rawText)}
         </div>
         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
           <a href="#/quiz" class="btn btn-secondary" style="border-radius: 9999px; padding: 0.45rem 1rem; font-size: 0.88rem; font-weight: 700;">
-            📝 ข้อสอบแยกบท (20 บท)
+            📝 คลังข้อสอบ (${(window.CC1_QUIZ_DATA?.totalQuestions || 765) + (window.CC1_PAST_EXAM_DATA?.totalQuestions || 0)} ข้อ)
           </a>
           <a href="#/drive" class="btn btn-secondary" style="border-radius: 9999px; padding: 0.45rem 1rem; font-size: 0.88rem;">
             📁 คลังชีท Drive (${totalDriveFolders})
@@ -623,18 +653,23 @@ ${this.escapeHtml(df.rawText)}
           <div class="card" style="padding: 1.55rem 1.75rem; border-color: var(--border-hover);">
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.55rem;">
               <h3 style="font-size: 1.12rem; font-weight: 800; margin: 0; color: var(--text-primary);">
-                📝 ข้อสอบแยกบท (สนภท. PLE-CC1)
+                📝 คลังข้อสอบ & สุ่มข้อสอบ PLE-CC1
               </h3>
               <span class="qz-stat-pill" style="font-size: 0.78rem; padding: 0.22rem 0.62rem;">
-                ${(window.CC1_QUIZ_DATA?.totalQuestions || 765)} ข้อ
+                ${(window.CC1_QUIZ_DATA?.totalQuestions || 765) + (window.CC1_PAST_EXAM_DATA?.totalQuestions || 0)} ข้อ
               </span>
             </div>
             <p style="font-size: 0.86rem; color: var(--text-secondary); margin: 0 0 0.9rem 0; line-height: 1.5;">
-              เลือกทำข้อสอบแยก 20 บท ติ๊กตัวเลือกแล้วตรวจเฉลย+เหตุผลทันที พร้อมรูปโครงสร้างเคมีและกรณีศึกษา
+              ครบทั้งข้อสอบแยก 20 บท, ข้อสอบย้อนหลังปี 2556–2567 (13 ชุด) และโหมดสุ่มข้อสอบตามปี/บท พร้อมคำอธิบายเชื่อมไปยังเนื้อหาบทเรียน
             </p>
-            <a href="#/quiz" class="btn-dark-pill" style="width: 100%; justify-content: center; font-size: 0.9rem;">
-              เลือกบททำข้อสอบ
-            </a>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <a href="#/quiz" class="btn-dark-pill" style="flex: 1 1 130px; justify-content: center; font-size: 0.88rem;">
+                เข้าคลังข้อสอบ
+              </a>
+              <a href="#/quiz?tab=random" class="btn-lime-pill" style="flex: 1 1 120px; justify-content: center; font-size: 0.88rem;">
+                🎲 สุ่มข้อสอบ
+              </a>
+            </div>
           </div>
           <!-- Companion Apps Card -->
           <div class="card" style="padding: 1.75rem 2rem;">
@@ -991,7 +1026,12 @@ ${this.escapeHtml(df.rawText)}
       }
 
       existingSidebar.scrollTop = prevScrollTop;
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (this._pendingDeepLink) {
+        this.focusSummaryDeepLink(c, this._pendingDeepLink);
+        this._pendingDeepLink = '';
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
       return;
     }
 
@@ -1053,7 +1093,12 @@ ${this.escapeHtml(df.rawText)}
     this.wrapResponsiveTables(c);
     this.enhanceAbbreviations(c);
     attachArticleEvents();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (this._pendingDeepLink) {
+      this.focusSummaryDeepLink(c, this._pendingDeepLink);
+      this._pendingDeepLink = '';
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
 
     const activeLink = document.querySelector(`.sidebar-topic-link[href="#/summary?topic=${currentTopic.id}"]`);
     if (activeLink) {
@@ -1708,163 +1753,631 @@ ${this.escapeHtml(df.rawText)}
     if (nextBtn) nextBtn.disabled = total === 0;
   },
 
+  focusSummaryDeepLink(c, queryStr) {
+    if (!c || !queryStr) return;
+    const raw = String(queryStr).trim().toLowerCase();
+    const cards = Array.from(c.querySelectorAll('.topic-content section.card'));
+    let target = cards.find(sec => {
+      const h = (sec.querySelector('h2')?.textContent || '').toLowerCase();
+      return h && (h.includes(raw) || raw.includes(h.replace(/^\d+\.\s*/, '')));
+    });
+    if (!target) {
+      const words = raw.split(/\s+/).filter(w => w.length >= 3).slice(0, 4);
+      if (words.length) {
+        let bestScore = 0;
+        cards.forEach(sec => {
+          const txt = (sec.textContent || '').toLowerCase();
+          const sc = words.reduce((a, w) => a + (txt.includes(w) ? 1 : 0), 0);
+          if (sc > bestScore) { bestScore = sc; target = sec; }
+        });
+      }
+    }
+    if (target) {
+      target.classList.add('cc1-deeplink-focus');
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      setTimeout(() => target.classList.remove('cc1-deeplink-focus'), 3200);
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  },
+
+  clearQuizTimer() {
+    if (this._quizTimerInterval) {
+      clearInterval(this._quizTimerInterval);
+      this._quizTimerInterval = null;
+    }
+  },
+
   clearQuizKeyHandler() {
     if (this._quizKeyHandler) {
       window.removeEventListener('keydown', this._quizKeyHandler);
       this._quizKeyHandler = null;
     }
+    this.clearQuizTimer();
+  },
+
+  getQuestionCorrectIndices(q) {
+    if (!q) return [];
+    if (Array.isArray(q.answerIndices)) return q.answerIndices;
+    if (typeof q.answerIdx === 'number' && q.answerIdx >= 0) return [q.answerIdx];
+    return [];
+  },
+
+  isQuizChoiceCorrect(q, pickedIdx) {
+    if (q?.answerSource === 'no_answer') return true; // never fail unanswerable book items
+    const valid = this.getQuestionCorrectIndices(q);
+    return valid.includes(pickedIdx);
+  },
+
+  getQuizSetStats(questions, answersMap = null) {
+    const qs = questions || [];
+    const ans = answersMap || this.state.quizAnswers || {};
+    let done = 0;
+    let correct = 0;
+    let wrong = 0;
+    qs.forEach(q => {
+      const picked = ans[q.id];
+      if (typeof picked === 'number') {
+        done++;
+        if (this.isQuizChoiceCorrect(q, picked)) correct++;
+        else wrong++;
+      }
+    });
+    return { total: qs.length, done, correct, wrong };
   },
 
   getChapterQuizStats(ch) {
-    const qs = ch.questions || [];
-    const ans = this.state.quizAnswers || {};
-    let done = 0;
-    let correct = 0;
-    qs.forEach(q => {
-      if (typeof ans[q.id] === 'number') {
-        done++;
-        if (ans[q.id] === q.answerIdx) correct++;
-      }
-    });
-    return {
-      total: qs.length,
-      done,
-      correct,
-      wrong: done - correct
-    };
+    return this.getQuizSetStats(ch?.questions || []);
+  },
+
+  shuffleArray(arr) {
+    const out = [...arr];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  },
+
+  getOrderedQuestions(setKey, questions) {
+    if (!questions || !questions.length) return [];
+    if (!this.state.quizShuffleOn) {
+      return questions.map((q, i) => ({ ...q, displayNo: i + 1 }));
+    }
+    const savedIds = this.state.quizShuffle[setKey];
+    const idMap = new Map(questions.map(q => [q.id, q]));
+    let ordered = [];
+    if (Array.isArray(savedIds) && savedIds.length === questions.length && savedIds.every(id => idMap.has(id))) {
+      ordered = savedIds.map(id => idMap.get(id));
+    } else {
+      ordered = this.shuffleArray(questions);
+      this.state.quizShuffle[setKey] = ordered.map(q => q.id);
+      this.saveQuizPrefs();
+    }
+    return ordered.map((q, i) => ({ ...q, displayNo: i + 1 }));
+  },
+
+  reshuffleSet(setKey, questions) {
+    const ordered = this.shuffleArray(questions || []);
+    this.state.quizShuffle[setKey] = ordered.map(q => q.id);
+    this.saveQuizPrefs();
+    return ordered.map((q, i) => ({ ...q, displayNo: i + 1 }));
+  },
+
+  formatTimerClock(sec) {
+    const s = Math.max(0, sec | 0);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+  },
+
+  buildDataRefHtml(q) {
+    const ref = q?.dataRef || (Array.isArray(q?.dataRefs) ? q.dataRefs[0] : null);
+    if (!ref || !ref.topicId) return '';
+    const secLabel = ref.secHeading ? ` · ${this.escapeHtml(ref.secHeading)}` : '';
+    const hlParam = encodeURIComponent(ref.secHeading || (ref.quote || '').slice(0, 48));
+    return `
+      <div class="qz-dataref-box">
+        <div class="qz-dataref-head">
+          <span class="qz-dataref-title">📖 เนื้อหาอ้างอิง: ${this.escapeHtml(ref.topicTitle || ref.topicId)}${secLabel}</span>
+          <a href="#/summary?topic=${this.escapeHtml(ref.topicId)}&hl=${hlParam}" class="qz-dataref-link">
+            เปิดอ่านบทเรียนตรงจุดนี้ →
+          </a>
+        </div>
+        ${ref.quote ? `<div class="qz-dataref-quote">“${this.escapeHtml(ref.quote)}”</div>` : ''}
+      </div>
+    `;
   },
 
   renderQuizHub(c) {
-    const qData = window.CC1_QUIZ_DATA || { chapters: [], totalQuestions: 0 };
-    const chapters = qData.chapters || [];
+    const chData = window.CC1_QUIZ_DATA || { chapters: [], totalQuestions: 0 };
+    const chapters = chData.chapters || [];
+    const peData = window.CC1_PAST_EXAM_DATA || { chapters: [], totalQuestions: 0 };
+    const years = peData.chapters || [];
     const answers = this.state.quizAnswers || {};
+    const activeTab = this.state.quizHubTab || 'chapter';
 
-    let totalQ = 0;
-    let totalDone = 0;
-    let totalCorrect = 0;
-    chapters.forEach(ch => {
-      const st = this.getChapterQuizStats(ch);
-      totalQ += st.total;
-      totalDone += st.done;
-      totalCorrect += st.correct;
-    });
+    const allChapterQs = chapters.flatMap(ch => ch.questions || []);
+    const allYearQs = years.flatMap(y => y.questions || []);
+    const stAll = this.getQuizSetStats([...allChapterQs, ...allYearQs]);
 
     const clinicalCount = chapters.filter(ch => ch.category === 'clinical').length;
     const pharmCount = chapters.filter(ch => ch.category === 'pharm').length;
+    const mcqCount = years.filter(y => y.track === 'mcq').length;
+    const pleCount = years.filter(y => y.track === 'ple').length;
 
     c.innerHTML = `
       <div class="card qz-header-card">
         <div class="qz-header-top">
           <div>
-            <h1 class="qz-title">📝 ข้อสอบแยกบท (PLE-CC1)</h1>
-            <p class="qz-sub">จากคู่มือเตรียมสอบ สนภท. ครบ ${chapters.length} บท (${totalQ} ข้อ) · ติ๊กตัวเลือกปุ๊ป ตรวจถูก-ผิด พร้อมเหตุผลเฉลยทันที</p>
+            <h1 class="qz-title">📝 คลังข้อสอบ & ระบบสุ่มข้อสอบ PLE-CC1</h1>
+            <p class="qz-sub">ครบ ${chapters.length} บท (${allChapterQs.length} ข้อ) + ข้อสอบย้อนหลังปี 2556–2567 (${allYearQs.length} ข้อ) · สุ่มลำดับข้ออัตโนมัติ พร้อมเฉลยอิงบทเรียน</p>
           </div>
           <div class="qz-stats-strip">
-            <span class="qz-stat-pill">ทำแล้ว ${totalDone} / ${totalQ} ข้อ</span>
-            <span class="qz-stat-pill is-success">✓ ถูก ${totalCorrect}</span>
-            <span class="qz-stat-pill is-danger">✕ ผิด ${totalDone - totalCorrect}</span>
-            ${totalDone > 0 ? `<button type="button" class="cs-action-btn" id="qzResetAllBtn">ล้างทั้งหมด</button>` : ''}
+            <span class="qz-stat-pill">ทำแล้ว ${stAll.done} / ${stAll.total} ข้อ</span>
+            <span class="qz-stat-pill is-success">✓ ถูก ${stAll.correct}</span>
+            <span class="qz-stat-pill is-danger">✕ ผิด ${stAll.wrong}</span>
+            ${stAll.done > 0 ? `<button type="button" class="cs-action-btn" id="qzResetAllBtn">ล้างทั้งหมด</button>` : ''}
           </div>
         </div>
 
-        <div class="qz-filter-bar">
-          <div class="cs-search-wrap" style="flex: 1 1 240px;">
-            <input type="search" id="qzChSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาชื่อบทหรือเนื้อหาข้อสอบ (เช่น หัวใจ, ติดเชื้อ, เภสัชวิเคราะห์, PK)..." autocomplete="off">
-          </div>
-          <div class="qz-cat-pills" id="qzCatPills">
-            <button type="button" class="cs-group-pill active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
-            <button type="button" class="cs-group-pill" data-qz-cat="clinical">โรคและเภสัชบำบัด (${clinicalCount})</button>
-            <button type="button" class="cs-group-pill" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
-          </div>
+        <div class="qz-tabs-bar" role="tablist" aria-label="โหมดคลังข้อสอบ">
+          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'chapter' ? 'active' : ''}" data-qz-tab="chapter">
+            📖 ข้อสอบแยกบท (${chapters.length} บท · ${allChapterQs.length})
+          </button>
+          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'year' ? 'active' : ''}" data-qz-tab="year">
+            🗓️ ข้อสอบแยกปี 2556–2567 (${years.length} ชุด · ${allYearQs.length})
+          </button>
+          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'random' ? 'active' : ''}" data-qz-tab="random">
+            🎲 สุ่มข้อสอบ (Custom)
+          </button>
         </div>
       </div>
 
-      <div id="qzEmptyHub" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
-        ไม่พบบทข้อสอบที่ตรงกับคำค้นหา
-      </div>
+      <div id="qzTabContent"></div>
+    `;
 
-      <div class="qz-chapter-grid" id="qzChapterGrid">
-        ${chapters.map(ch => {
-          const st = this.getChapterQuizStats(ch);
-          const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
-          const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
-          const nextUnanswered = (ch.questions || []).find(q => typeof answers[q.id] !== 'number');
-          const startNo = nextUnanswered ? nextUnanswered.no : 1;
-          const btnLabel = st.done === 0 ? 'เริ่มทำข้อสอบ' : (st.done < st.total ? `ทำต่อข้อที่ ${startNo}` : 'ทบทวนข้อสอบ');
-          const searchBlob = `${ch.chapterNum} ${ch.title} ${ch.id} ${(ch.questions || []).slice(0, 8).map(q => q.subtopic || '').join(' ')}`.toLowerCase();
-          return `
-            <article class="qz-ch-card" data-qz-cat="${ch.category}" data-qz-search="${this.escapeHtml(searchBlob)}">
-              <div>
-                <div class="qz-ch-head">
-                  <div class="qz-ch-num">${ch.icon}</div>
-                  <div style="min-width: 0; flex: 1;">
-                    <h2 class="qz-ch-title">บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</h2>
-                    <div class="qz-ch-meta">
-                      <span>${st.total} ข้อ</span>
-                      ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done} ข้อ</span>` : '<span>· ยังไม่ได้ทำ</span>'}
+    const tabBox = document.getElementById('qzTabContent');
+
+    const renderChapterTab = () => {
+      tabBox.innerHTML = `
+        <div class="card qz-header-card" style="padding: 0.9rem 1.2rem; margin-bottom: 1rem;">
+          <div class="qz-filter-bar" style="margin-top: 0;">
+            <div class="cs-search-wrap" style="flex: 1 1 240px;">
+              <input type="search" id="qzChSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาชื่อบทหรือหัวข้อ (เช่น หัวใจ, ติดเชื้อ, เภสัชวิเคราะห์, PK)..." autocomplete="off">
+            </div>
+            <div class="qz-cat-pills" id="qzCatPills">
+              <button type="button" class="cs-group-pill active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
+              <button type="button" class="cs-group-pill" data-qz-cat="clinical">โรคและเภสัชบำบัด (${clinicalCount})</button>
+              <button type="button" class="cs-group-pill" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="qzEmptyHub" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
+          ไม่พบบทข้อสอบที่ตรงกับคำค้นหา
+        </div>
+
+        <div class="qz-chapter-grid" id="qzChapterGrid">
+          ${chapters.map(ch => {
+            const st = this.getChapterQuizStats(ch);
+            const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
+            const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
+            const btnLabel = st.done === 0 ? 'เริ่มทำ (สุ่มข้อ)' : (st.done < st.total ? `ทำต่อ (${st.done}/${st.total})` : 'ทบทวนข้อสอบ');
+            const searchBlob = `${ch.chapterNum} ${ch.title} ${ch.id} ${(ch.questions || []).slice(0, 10).map(q => q.subtopic || '').join(' ')}`.toLowerCase();
+            return `
+              <article class="qz-ch-card" data-qz-cat="${ch.category}" data-qz-search="${this.escapeHtml(searchBlob)}">
+                <div>
+                  <div class="qz-ch-head">
+                    <div class="qz-ch-num">${ch.icon}</div>
+                    <div style="min-width: 0; flex: 1;">
+                      <h2 class="qz-ch-title">บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</h2>
+                      <div class="qz-ch-meta">
+                        <span>${st.total} ข้อ</span>
+                        ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done} ข้อ</span>` : '<span>· ยังไม่ได้ทำ</span>'}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <div class="qz-ch-prog-wrap">
-                <div class="qz-ch-prog-row">
-                  <span>คืบหน้า ${st.done}/${st.total}</span>
-                  <span>${st.total ? Math.round((st.done / st.total) * 100) : 0}%</span>
+                <div class="qz-ch-prog-wrap">
+                  <div class="qz-ch-prog-row">
+                    <span>คืบหน้า ${st.done}/${st.total}</span>
+                    <span>${st.total ? Math.round((st.done / st.total) * 100) : 0}%</span>
+                  </div>
+                  <div class="qz-prog-track" aria-hidden="true">
+                    <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
+                    <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
+                  </div>
                 </div>
-                <div class="qz-prog-track" aria-hidden="true">
-                  <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
-                  <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
+                <div class="qz-ch-actions">
+                  <a href="#/quiz?chapter=${ch.id}" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.86rem;">
+                    ${btnLabel}
+                  </a>
+                  ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-qz-clear-ch="${ch.id}">รีเซ็ต</button>` : ''}
                 </div>
-              </div>
-              <div class="qz-ch-actions">
-                <a href="#/quiz?chapter=${ch.id}&q=${startNo}" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.86rem;">
-                  ${btnLabel}
-                </a>
-                ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-qz-clear-ch="${ch.id}" title="ล้างคำตอบบทนี้">รีเซ็ต</button>` : ''}
-              </div>
-            </article>
-          `;
-        }).join('')}
-      </div>
-    `;
+              </article>
+            `;
+          }).join('')}
+        </div>
+      `;
 
-    // Wire search + category filter + reset
-    const searchInput = document.getElementById('qzChSearchInput');
-    const catPills = document.getElementById('qzCatPills');
-    const cards = Array.from(c.querySelectorAll('.qz-ch-card'));
-    const emptyEl = document.getElementById('qzEmptyHub');
-    let activeCat = 'all';
+      const searchInput = document.getElementById('qzChSearchInput');
+      const catPills = document.getElementById('qzCatPills');
+      const cards = Array.from(tabBox.querySelectorAll('.qz-ch-card'));
+      const emptyEl = document.getElementById('qzEmptyHub');
+      let activeCat = 'all';
 
-    const applyHubFilter = () => {
-      const q = (searchInput?.value || '').trim().toLowerCase();
-      let shown = 0;
-      cards.forEach(card => {
-        const catOk = activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat;
-        const txtOk = !q || (card.getAttribute('data-qz-search') || '').includes(q);
-        const vis = catOk && txtOk;
-        card.classList.toggle('is-hidden', !vis);
-        if (vis) shown++;
+      const applyHubFilter = () => {
+        const q = (searchInput?.value || '').trim().toLowerCase();
+        let shown = 0;
+        cards.forEach(card => {
+          const catOk = activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat;
+          const txtOk = !q || (card.getAttribute('data-qz-search') || '').includes(q);
+          const vis = catOk && txtOk;
+          card.classList.toggle('is-hidden', !vis);
+          if (vis) shown++;
+        });
+        if (emptyEl) emptyEl.style.display = shown === 0 ? 'block' : 'none';
+      };
+
+      searchInput?.addEventListener('input', applyHubFilter);
+      catPills?.querySelectorAll('.cs-group-pill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          activeCat = btn.getAttribute('data-qz-cat') || 'all';
+          catPills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
+          applyHubFilter();
+        });
       });
-      if (emptyEl) emptyEl.style.display = shown === 0 ? 'block' : 'none';
+      tabBox.querySelectorAll('[data-qz-clear-ch]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cid = btn.getAttribute('data-qz-clear-ch');
+          const targetCh = chapters.find(x => x.id === cid);
+          if (!targetCh) return;
+          targetCh.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
+          this.saveQuizAnswers();
+          this.renderQuizHub(c);
+        });
+      });
     };
 
-    searchInput?.addEventListener('input', applyHubFilter);
-    catPills?.querySelectorAll('.cs-group-pill').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeCat = btn.getAttribute('data-qz-cat') || 'all';
-        catPills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
-        applyHubFilter();
-      });
-    });
+    const renderYearTab = () => {
+      if (!years.length) {
+        tabBox.innerHTML = `<div class="card" style="padding: 1.5rem; text-align:center;">กำลังเตรียมข้อมูลข้อสอบแยกปี...</div>`;
+        return;
+      }
+      tabBox.innerHTML = `
+        <div class="card qz-header-card" style="padding: 0.9rem 1.2rem; margin-bottom: 1rem;">
+          <div class="qz-filter-bar" style="margin-top: 0;">
+            <div class="cs-search-wrap" style="flex: 1 1 240px;">
+              <input type="search" id="qzYrSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาปี พ.ศ. หรือชุดข้อสอบ (เช่น 2566, 2561, PLE-CC1, MCQ)..." autocomplete="off">
+            </div>
+            <div class="qz-cat-pills" id="qzYrCatPills">
+              <button type="button" class="cs-group-pill active" data-yr-cat="all">ทั้งหมด (${years.length})</button>
+              <button type="button" class="cs-group-pill" data-yr-cat="mcq">MCQ 2556–2562 (${mcqCount})</button>
+              <button type="button" class="cs-group-pill" data-yr-cat="ple">PLE-CC1 2561–2567 (${pleCount})</button>
+            </div>
+          </div>
+        </div>
 
-    c.querySelectorAll('[data-qz-clear-ch]').forEach(btn => {
+        <div id="qzYrEmpty" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
+          ไม่พบชุดข้อสอบที่ตรงกับคำค้นหา
+        </div>
+
+        <div class="qz-chapter-grid" id="qzYearGrid">
+          ${years.map(yr => {
+            const qs = yr.questions || [];
+            const st = this.getQuizSetStats(qs);
+            const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
+            const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
+            const fileKeys = qs.filter(q => q.answerSource === 'file').length;
+            const aiKeys = qs.filter(q => q.answerSource === 'ai').length;
+            const d1Count = qs.filter(q => q.day === 'day1').length;
+            const d2Count = qs.filter(q => q.day === 'day2').length;
+            const searchBlob = `${yr.title} ${yr.year} ${yr.track} ch${yr.chapterNum}`.toLowerCase();
+            return `
+              <article class="qz-ch-card" data-yr-cat="${yr.track}" data-yr-search="${this.escapeHtml(searchBlob)}">
+                <div>
+                  <div class="qz-ch-head">
+                    <div class="qz-ch-num">${yr.track === 'ple' ? '🎯' : '📘'}</div>
+                    <div style="min-width: 0; flex: 1;">
+                      <h2 class="qz-ch-title">${this.escapeHtml(yr.title)}</h2>
+                      <div class="qz-ch-meta" style="display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.25rem;">
+                        <span>${st.total} ข้อ</span>
+                        ${fileKeys > 0 ? `<span class="qz-src-badge is-file">เฉลยไฟล์ ${fileKeys}</span>` : ''}
+                        ${aiKeys > 0 ? `<span class="qz-src-badge is-ai">AI เฉลย ${aiKeys}</span>` : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qz-ch-prog-wrap">
+                  <div class="qz-ch-prog-row">
+                    <span>คืบหน้า ${st.done}/${st.total}</span>
+                    <span>${st.done > 0 ? `ถูก ${st.correct} ข้อ` : 'ยังไม่ทำ'}</span>
+                  </div>
+                  <div class="qz-prog-track" aria-hidden="true">
+                    <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
+                    <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
+                  </div>
+                </div>
+                <div class="qz-ch-actions">
+                  <a href="#/quiz?year=${yr.id}&day=all" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.84rem;">
+                    ทำทั้งชุด (${st.total})
+                  </a>
+                  ${yr.hasDay2 && d2Count > 0 ? `
+                    <a href="#/quiz?year=${yr.id}&day=day1" class="cs-action-btn" title="เฉพาะวันแรก (${d1Count} ข้อ)">วัน 1</a>
+                    <a href="#/quiz?year=${yr.id}&day=day2" class="cs-action-btn" title="เฉพาะวันที่สอง (${d2Count} ข้อ)">วัน 2</a>
+                  ` : ''}
+                  ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-yr-clear="${yr.id}">รีเซ็ต</button>` : ''}
+                </div>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      const sInput = document.getElementById('qzYrSearchInput');
+      const pills = document.getElementById('qzYrCatPills');
+      const cards = Array.from(tabBox.querySelectorAll('.qz-ch-card'));
+      const emptyEl = document.getElementById('qzYrEmpty');
+      let act = 'all';
+      const applyYr = () => {
+        const q = (sInput?.value || '').trim().toLowerCase();
+        let shown = 0;
+        cards.forEach(card => {
+          const okCat = act === 'all' || card.getAttribute('data-yr-cat') === act;
+          const okTxt = !q || (card.getAttribute('data-yr-search') || '').includes(q);
+          const vis = okCat && okTxt;
+          card.classList.toggle('is-hidden', !vis);
+          if (vis) shown++;
+        });
+        if (emptyEl) emptyEl.style.display = shown === 0 ? 'block' : 'none';
+      };
+      sInput?.addEventListener('input', applyYr);
+      pills?.querySelectorAll('.cs-group-pill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          act = btn.getAttribute('data-yr-cat') || 'all';
+          pills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
+          applyYr();
+        });
+      });
+      tabBox.querySelectorAll('[data-yr-clear]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const yid = btn.getAttribute('data-yr-clear');
+          const yr = years.find(x => x.id === yid);
+          if (!yr) return;
+          yr.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
+          this.saveQuizAnswers();
+          this.renderQuizHub(c);
+        });
+      });
+    };
+
+    const renderRandomTab = () => {
+      let srcScope = 'all'; // 'all' | 'chapters' | 'years' | 'custom'
+      let dayScope = 'all'; // 'all' | 'day1' | 'day2'
+      let statusScope = 'all'; // 'all' | 'todo' | 'wrong'
+      let chosenChapters = new Set(chapters.map(x => x.id));
+      let chosenYears = new Set(years.map(x => x.id));
+      let reqCount = 30;
+      let examMode = this.state.quizExamMode || 'instant';
+      let timerOn = !!this.state.quizTimerOn;
+
+      const buildPool = () => {
+        let pool = [];
+        const addCh = (ch) => {
+          (ch.questions || []).forEach(q => pool.push({ ...q, _sourceLabel: `บท ${ch.chapterNum}. ${ch.title}` }));
+        };
+        const addYr = (yr) => {
+          (yr.questions || []).forEach(q => {
+            if (dayScope !== 'all' && q.day !== dayScope) return;
+            pool.push({ ...q, _sourceLabel: `${yr.title} · ${q.day === 'day2' ? 'วันสอง' : 'วันแรก'} ข้อ ${q.origNo}` });
+          });
+        };
+        if (srcScope === 'all') {
+          chapters.forEach(addCh);
+          years.forEach(addYr);
+        } else if (srcScope === 'chapters') {
+          chapters.forEach(addCh);
+        } else if (srcScope === 'years') {
+          years.forEach(addYr);
+        } else {
+          chapters.filter(ch => chosenChapters.has(ch.id)).forEach(addCh);
+          years.filter(yr => chosenYears.has(yr.id)).forEach(addYr);
+        }
+        if (statusScope === 'todo') {
+          pool = pool.filter(q => typeof answers[q.id] !== 'number');
+        } else if (statusScope === 'wrong') {
+          pool = pool.filter(q => typeof answers[q.id] === 'number' && !this.isQuizChoiceCorrect(q, answers[q.id]));
+        }
+        return pool;
+      };
+
+      const paintBuilder = () => {
+        const pool = buildPool();
+        const actualCount = Math.min(Math.max(1, reqCount), pool.length);
+        tabBox.innerHTML = `
+          <div class="qz-rand-panel">
+            <div class="qz-rand-section">
+              <div class="qz-rand-label">
+                <span>1. เลือกแหล่งข้อสอบ</span>
+                <span class="qz-stat-pill" id="qzPoolCountPill">พบ ${pool.length} ข้อที่ตรงเงื่อนไข</span>
+              </div>
+              <div class="qz-cat-pills" id="qzRandScopePills">
+                <button type="button" class="cs-group-pill ${srcScope === 'all' ? 'active' : ''}" data-scope="all">ทั้งหมดรวมทุกคลัง (${stAll.total})</button>
+                <button type="button" class="cs-group-pill ${srcScope === 'years' ? 'active' : ''}" data-scope="years">เฉพาะข้อสอบแยกปี (${allYearQs.length})</button>
+                <button type="button" class="cs-group-pill ${srcScope === 'chapters' ? 'active' : ''}" data-scope="chapters">เฉพาะข้อสอบแยกบท (${allChapterQs.length})</button>
+                <button type="button" class="cs-group-pill ${srcScope === 'custom' ? 'active' : ''}" data-scope="custom">ติ๊กเลือกเองหลายปี / หลายบท</button>
+              </div>
+              ${srcScope === 'custom' ? `
+                <div style="margin-top: 0.9rem;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+                    <b style="font-size:0.84rem;">🗓️ ข้อสอบแยกปี (ติ๊กเลือกได้หลายปี)</b>
+                    <div style="display:flex; gap:0.4rem;">
+                      <button type="button" class="cs-action-btn" id="qzYrAllOn">เลือกทุกปี</button>
+                      <button type="button" class="cs-action-btn" id="qzYrAllOff">ล้าง</button>
+                    </div>
+                  </div>
+                  <div class="qz-pick-grid">
+                    ${years.map(yr => `
+                      <label class="qz-pick-item">
+                        <input type="checkbox" data-pick-yr="${yr.id}" ${chosenYears.has(yr.id) ? 'checked' : ''}>
+                        <span>${this.escapeHtml(yr.title)} (${yr.questionCount})</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin: 0.9rem 0 0.35rem;">
+                    <b style="font-size:0.84rem;">📖 ข้อสอบแยกบท (ติ๊กเลือกได้หลายบท)</b>
+                    <div style="display:flex; gap:0.4rem;">
+                      <button type="button" class="cs-action-btn" id="qzChAllOn">เลือกทุกบท</button>
+                      <button type="button" class="cs-action-btn" id="qzChAllOff">ล้าง</button>
+                    </div>
+                  </div>
+                  <div class="qz-pick-grid">
+                    ${chapters.map(ch => `
+                      <label class="qz-pick-item">
+                        <input type="checkbox" data-pick-ch="${ch.id}" ${chosenChapters.has(ch.id) ? 'checked' : ''}>
+                        <span>บท ${ch.chapterNum}. ${this.escapeHtml(ch.title)} (${ch.questionCount})</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="qz-rand-section">
+              <div class="qz-rand-label"><span>2. กรองวัน & สถานะข้อสอบ</span></div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.85rem;">
+                <div>
+                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;">ช่วงวันของข้อสอบรายปี:</div>
+                  <div class="qz-cat-pills">
+                    <button type="button" class="cs-group-pill ${dayScope === 'all' ? 'active' : ''}" data-rday="all">ทั้งปี</button>
+                    <button type="button" class="cs-group-pill ${dayScope === 'day1' ? 'active' : ''}" data-rday="day1">เฉพาะวันแรก</button>
+                    <button type="button" class="cs-group-pill ${dayScope === 'day2' ? 'active' : ''}" data-rday="day2">เฉพาะวันที่สอง</button>
+                  </div>
+                </div>
+                <div>
+                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;">สถานะข้อสอบ:</div>
+                  <div class="qz-cat-pills">
+                    <button type="button" class="cs-group-pill ${statusScope === 'all' ? 'active' : ''}" data-rstatus="all">ทุกข้อ</button>
+                    <button type="button" class="cs-group-pill ${statusScope === 'todo' ? 'active' : ''}" data-rstatus="todo">เฉพาะข้อที่ยังไม่ทำ</button>
+                    <button type="button" class="cs-group-pill ${statusScope === 'wrong' ? 'active' : ''}" data-rstatus="wrong">เฉพาะข้อที่เคยผิด</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="qz-rand-section">
+              <div class="qz-rand-label"><span>3. จำนวนข้อ & รูปแบบการสอบ</span></div>
+              <div class="qz-rand-count-row" style="margin-bottom: 0.85rem;">
+                ${[10, 20, 30, 50, 100].map(n => `
+                  <button type="button" class="cs-group-pill ${reqCount === n ? 'active' : ''}" data-rcount="${n}">${n} ข้อ</button>
+                `).join('')}
+                <label style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; font-weight: 700;">
+                  กำหนดเอง:
+                  <input type="number" id="qzCustomCountInput" class="qz-num-input" min="1" max="${Math.max(1, pool.length)}" value="${reqCount}">
+                </label>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.85rem;">
+                <div class="qz-cat-pills">
+                  <button type="button" class="cs-group-pill ${examMode === 'instant' ? 'active' : ''}" data-rmode="instant">⚡ ติ๊กปุ๊บเฉลยปั๊บ</button>
+                  <button type="button" class="cs-group-pill ${examMode === 'sim' ? 'active' : ''}" data-rmode="sim">📋 จำลองสอบจริง (ตรวจตอนจบ)</button>
+                </div>
+                <label style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 700; cursor: pointer;">
+                  <input type="checkbox" id="qzTimerCheck" ${timerOn ? 'checked' : ''}>
+                  ⏱ จับเวลาระหว่างทำข้อสอบ
+                </label>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+              <button type="button" id="qzStartRandomBtn" class="btn-dark-pill" style="padding: 0.78rem 1.65rem; font-size: 0.98rem;" ${pool.length === 0 ? 'disabled' : ''}>
+                🚀 เริ่มสุ่มข้อสอบ (${actualCount} ข้อ)
+              </button>
+              ${this.state.quizRandomSession ? `
+                <a href="#/quiz?random=1" class="btn btn-secondary" style="border-radius: 9999px; font-weight: 700;">
+                  ↩ ทำชุดสุ่มเดิมต่อ (${this.state.quizRandomSession.questions.length} ข้อ)
+                </a>
+              ` : ''}
+            </div>
+          </div>
+        `;
+
+        tabBox.querySelectorAll('[data-scope]').forEach(btn => {
+          btn.addEventListener('click', () => { srcScope = btn.getAttribute('data-scope'); paintBuilder(); });
+        });
+        tabBox.querySelectorAll('[data-rday]').forEach(btn => {
+          btn.addEventListener('click', () => { dayScope = btn.getAttribute('data-rday'); paintBuilder(); });
+        });
+        tabBox.querySelectorAll('[data-rstatus]').forEach(btn => {
+          btn.addEventListener('click', () => { statusScope = btn.getAttribute('data-rstatus'); paintBuilder(); });
+        });
+        tabBox.querySelectorAll('[data-rcount]').forEach(btn => {
+          btn.addEventListener('click', () => { reqCount = parseInt(btn.getAttribute('data-rcount'), 10) || 20; paintBuilder(); });
+        });
+        document.getElementById('qzCustomCountInput')?.addEventListener('change', (e) => {
+          reqCount = Math.max(1, parseInt(e.target.value, 10) || 20);
+          paintBuilder();
+        });
+        tabBox.querySelectorAll('[data-rmode]').forEach(btn => {
+          btn.addEventListener('click', () => { examMode = btn.getAttribute('data-rmode'); this.state.quizExamMode = examMode; paintBuilder(); });
+        });
+        document.getElementById('qzTimerCheck')?.addEventListener('change', (e) => {
+          timerOn = !!e.target.checked;
+          this.state.quizTimerOn = timerOn;
+        });
+        tabBox.querySelectorAll('[data-pick-yr]').forEach(cb => {
+          cb.addEventListener('change', () => {
+            const id = cb.getAttribute('data-pick-yr');
+            if (cb.checked) chosenYears.add(id); else chosenYears.delete(id);
+            paintBuilder();
+          });
+        });
+        tabBox.querySelectorAll('[data-pick-ch]').forEach(cb => {
+          cb.addEventListener('change', () => {
+            const id = cb.getAttribute('data-pick-ch');
+            if (cb.checked) chosenChapters.add(id); else chosenChapters.delete(id);
+            paintBuilder();
+          });
+        });
+        document.getElementById('qzYrAllOn')?.addEventListener('click', () => { chosenYears = new Set(years.map(x => x.id)); paintBuilder(); });
+        document.getElementById('qzYrAllOff')?.addEventListener('click', () => { chosenYears.clear(); paintBuilder(); });
+        document.getElementById('qzChAllOn')?.addEventListener('click', () => { chosenChapters = new Set(chapters.map(x => x.id)); paintBuilder(); });
+        document.getElementById('qzChAllOff')?.addEventListener('click', () => { chosenChapters.clear(); paintBuilder(); });
+
+        document.getElementById('qzStartRandomBtn')?.addEventListener('click', () => {
+          const finalPool = buildPool();
+          if (!finalPool.length) return;
+          const n = Math.min(Math.max(1, reqCount), finalPool.length);
+          const picked = this.shuffleArray(finalPool).slice(0, n).map((q, idx) => ({ ...q, displayNo: idx + 1 }));
+          this.state.quizExamMode = examMode;
+          this.state.quizTimerOn = timerOn;
+          this.state.quizTimerSec = 0;
+          this.state.quizRandomSession = {
+            title: `ชุดสุ่มข้อสอบ (${n} ข้อ)`,
+            questions: picked,
+            simAnswers: {},
+            simSubmitted: false
+          };
+          window.location.hash = '#/quiz?random=1&q=1';
+        });
+      };
+
+      paintBuilder();
+    };
+
+    const renderActiveTab = () => {
+      if (this.state.quizHubTab === 'year') renderYearTab();
+      else if (this.state.quizHubTab === 'random') renderRandomTab();
+      else renderChapterTab();
+    };
+
+    c.querySelectorAll('[data-qz-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const cid = btn.getAttribute('data-qz-clear-ch');
-        const targetCh = chapters.find(x => x.id === cid);
-        if (!targetCh) return;
-        targetCh.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
-        this.saveQuizAnswers();
-        this.renderQuizHub(c);
+        this.state.quizHubTab = btn.getAttribute('data-qz-tab') || 'chapter';
+        c.querySelectorAll('[data-qz-tab]').forEach(b => b.classList.toggle('active', b === btn));
+        renderActiveTab();
       });
     });
 
@@ -1874,59 +2387,151 @@ ${this.escapeHtml(df.rawText)}
       this.saveQuizAnswers();
       this.renderQuizHub(c);
     });
+
+    renderActiveTab();
   },
 
   renderQuizRunner(c, chapterId, qNumParam) {
-    const qData = window.CC1_QUIZ_DATA || { chapters: [] };
-    const ch = (qData.chapters || []).find(x => x.id === chapterId) || (qData.chapters || [])[0];
-    if (!ch) {
+    const chData = window.CC1_QUIZ_DATA || { chapters: [] };
+    const ch = (chData.chapters || []).find(x => x.id === chapterId) || (chData.chapters || [])[0];
+    if (!ch) { this.renderQuizHub(c); return; }
+    this.renderUnifiedRunner(c, {
+      setKey: `ch_${ch.id}`,
+      backTab: 'chapter',
+      baseHash: `#/quiz?chapter=${ch.id}`,
+      title: `${ch.icon} บทที่ ${ch.chapterNum}. ${ch.title}`,
+      rawQuestions: ch.questions || [],
+      qNumParam
+    });
+  },
+
+  renderPastExamRunner(c, yearId, dayParam, qNumParam) {
+    const peData = window.CC1_PAST_EXAM_DATA || { chapters: [] };
+    const yr = (peData.chapters || []).find(x => x.id === yearId) || (peData.chapters || [])[0];
+    if (!yr) { this.renderQuizHub(c); return; }
+    const dayFilter = (dayParam === 'day1' || dayParam === 'day2') ? dayParam : 'all';
+    const rawQs = (yr.questions || []).filter(q => dayFilter === 'all' || q.day === dayFilter);
+    const dayTag = dayFilter === 'day1' ? ' · วันแรก' : (dayFilter === 'day2' ? ' · วันที่สอง' : '');
+    this.renderUnifiedRunner(c, {
+      setKey: `yr_${yr.id}_${dayFilter}`,
+      backTab: 'year',
+      baseHash: `#/quiz?year=${yr.id}&day=${dayFilter}`,
+      title: `🗓️ ${yr.title}${dayTag}`,
+      rawQuestions: rawQs,
+      qNumParam
+    });
+  },
+
+  renderRandomQuizRunner(c, qNumParam) {
+    const sess = this.state.quizRandomSession;
+    if (!sess || !sess.questions || !sess.questions.length) {
+      this.state.quizHubTab = 'random';
       this.renderQuizHub(c);
       return;
     }
+    this.renderUnifiedRunner(c, {
+      setKey: '__random_session__',
+      isRandomSession: true,
+      backTab: 'random',
+      baseHash: '#/quiz?random=1',
+      title: `🎲 ${sess.title}`,
+      rawQuestions: sess.questions,
+      qNumParam
+    });
+  },
 
-    const qs = ch.questions || [];
-    let filterMode = this.state.quizFilter || 'all'; // 'all' | 'todo' | 'wrong'
+  renderUnifiedRunner(c, cfg) {
+    let qs = cfg.isRandomSession
+      ? cfg.rawQuestions
+      : this.getOrderedQuestions(cfg.setKey, cfg.rawQuestions);
+    if (!qs.length) { this.renderQuizHub(c); return; }
+
+    let filterMode = this.state.quizFilter || 'all';
+    let currentPos = (cfg.qNumParam >= 1 && cfg.qNumParam <= qs.length) ? cfg.qNumParam : 1;
+    let showMap = false;
+    let examMode = this.state.quizExamMode || 'instant';
+    let simSubmitted = cfg.isRandomSession ? !!this.state.quizRandomSession.simSubmitted : false;
+
+    const getAnsStore = () => (examMode === 'sim' && cfg.isRandomSession)
+      ? this.state.quizRandomSession.simAnswers
+      : (examMode === 'sim' ? (this._localSimAnswers || (this._localSimAnswers = {})) : this.state.quizAnswers);
+
+    if (cfg.isRandomSession && !this.state.quizRandomSession.simAnswers) {
+      this.state.quizRandomSession.simAnswers = {};
+    }
+    if (!cfg.isRandomSession) {
+      this._localSimAnswers = {};
+    }
+
     const getFilteredQs = () => {
-      const ans = this.state.quizAnswers || {};
+      const ans = getAnsStore();
       if (filterMode === 'todo') return qs.filter(q => typeof ans[q.id] !== 'number');
-      if (filterMode === 'wrong') return qs.filter(q => typeof ans[q.id] === 'number' && ans[q.id] !== q.answerIdx);
+      if (filterMode === 'wrong') {
+        if (examMode === 'sim' && !simSubmitted) return qs;
+        return qs.filter(q => typeof ans[q.id] === 'number' && !this.isQuizChoiceCorrect(q, ans[q.id]));
+      }
       return qs;
     };
 
-    let currentNo = (qNumParam >= 1 && qNumParam <= qs.length) ? qNumParam : 1;
-    let showMap = false;
+    const startTimerIfNeeded = () => {
+      this.clearQuizTimer();
+      if (!this.state.quizTimerOn) return;
+      this._quizTimerInterval = setInterval(() => {
+        this.state.quizTimerSec = (this.state.quizTimerSec || 0) + 1;
+        const el = document.getElementById('qzClockDisplay');
+        if (el) el.textContent = this.formatTimerClock(this.state.quizTimerSec);
+      }, 1000);
+    };
 
     const renderBody = () => {
-      const ans = this.state.quizAnswers || {};
-      const st = this.getChapterQuizStats(ch);
+      const ans = getAnsStore();
+      const st = this.getQuizSetStats(qs, ans);
       const visibleQs = getFilteredQs();
-      let q = qs.find(x => x.no === currentNo) || qs[0];
-      if (visibleQs.length && !visibleQs.some(x => x.no === q.no)) {
+      let q = qs.find(x => x.displayNo === currentPos) || qs[0];
+      if (visibleQs.length && !visibleQs.some(x => x.displayNo === q.displayNo)) {
         q = visibleQs[0];
-        currentNo = q.no;
+        currentPos = q.displayNo;
       }
 
       const selectedIdx = typeof ans[q.id] === 'number' ? ans[q.id] : null;
       const isAnswered = selectedIdx !== null;
-      const isCorrect = isAnswered && selectedIdx === q.answerIdx;
+      const showInstantReveal = isAnswered && (examMode === 'instant' || simSubmitted);
+      const validIndices = this.getQuestionCorrectIndices(q);
+      const isNoAnswer = q.answerSource === 'no_answer';
+      const isCorrect = isAnswered && this.isQuizChoiceCorrect(q, selectedIdx);
       const labels = q.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
-      const correctLabel = labels[q.answerIdx] || q.answerKey || '';
+      const correctLabelsText = isNoAnswer
+        ? 'ไม่มีคำตอบในเฉลย'
+        : validIndices.map(i => labels[i] || (i + 1)).join(', ');
 
-      const visIdx = visibleQs.findIndex(x => x.no === q.no);
+      const visIdx = visibleQs.findIndex(x => x.displayNo === q.displayNo);
       const prevQ = visIdx > 0 ? visibleQs[visIdx - 1] : null;
       const nextQ = (visIdx >= 0 && visIdx + 1 < visibleQs.length) ? visibleQs[visIdx + 1] : null;
+
+      // Provenance tags
+      const ansTag = q.answerSource === 'no_answer'
+        ? `<span class="qz-src-badge is-warn">เฉลยระบุ: ไม่มีคำตอบ</span>`
+        : (q.answerSource === 'file'
+          ? `<span class="qz-src-badge is-file">เฉลยจากไฟล์</span>`
+          : (q.answerSource === 'ai' ? `<span class="qz-src-badge is-ai">AI เฉลยเทียบเนื้อหา</span>` : ''));
+      const choiceTag = q.choiceSource === 'ai'
+        ? `<span class="qz-src-badge is-ai">AI สร้างชอยส์</span>`
+        : '';
 
       c.innerHTML = `
         <div class="qz-runner-wrap">
           <div class="qz-runner-topbar">
             <div class="qz-topbar-row">
-              <a href="#/quiz" class="qz-back-btn">← เลือกบท</a>
-              <div class="qz-runner-ch-name">${ch.icon} บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</div>
+              <a href="#/quiz?tab=${cfg.backTab}" class="qz-back-btn">← กลับหน้าคลัง</a>
+              <div class="qz-runner-ch-name">${this.escapeHtml(cfg.title)}</div>
               <div class="qz-stats-strip">
-                <span class="qz-stat-pill is-success" id="qzTopOk">✓ ${st.correct}</span>
-                <span class="qz-stat-pill is-danger" id="qzTopBad">✕ ${st.wrong}</span>
-                <span class="qz-stat-pill" id="qzTopLeft">เหลือ ${st.total - st.done}</span>
-                <button type="button" class="cs-action-btn" id="qzToggleMapBtn" aria-expanded="${showMap}">${showMap ? 'ซ่อนเลขข้อ' : `เลือกข้อ (${q.no}/${st.total})`}</button>
+                ${this.state.quizTimerOn ? `<span class="qz-timer-pill">⏱ <span id="qzClockDisplay">${this.formatTimerClock(this.state.quizTimerSec)}</span></span>` : ''}
+                ${(examMode === 'instant' || simSubmitted) ? `
+                  <span class="qz-stat-pill is-success">✓ ${st.correct}</span>
+                  <span class="qz-stat-pill is-danger">✕ ${st.wrong}</span>
+                ` : `<span class="qz-stat-pill">ตอบแล้ว ${st.done}/${st.total}</span>`}
+                <span class="qz-stat-pill">เหลือ ${st.total - st.done}</span>
+                <button type="button" class="cs-action-btn" id="qzToggleMapBtn">${showMap ? 'ซ่อนเลขข้อ' : `เลือกข้อ (${q.displayNo}/${st.total})`}</button>
               </div>
             </div>
             ${showMap ? `
@@ -1934,9 +2539,12 @@ ${this.escapeHtml(df.rawText)}
                 ${qs.map(item => {
                   const ua = ans[item.id];
                   let cls = 'qz-qdot';
-                  if (typeof ua === 'number') cls += (ua === item.answerIdx ? ' is-ok' : ' is-bad');
-                  if (item.no === q.no) cls += ' is-current';
-                  return `<button type="button" class="${cls}" data-qz-jump="${item.no}">${item.no}</button>`;
+                  if (typeof ua === 'number') {
+                    if (examMode === 'sim' && !simSubmitted) cls += ' is-current';
+                    else cls += (this.isQuizChoiceCorrect(item, ua) ? ' is-ok' : ' is-bad');
+                  }
+                  if (item.displayNo === q.displayNo) cls += ' is-current';
+                  return `<button type="button" class="${cls}" data-qz-jump="${item.displayNo}">${item.displayNo}</button>`;
                 }).join('')}
               </div>
             ` : ''}
@@ -1946,23 +2554,61 @@ ${this.escapeHtml(df.rawText)}
             <div class="qz-cat-pills">
               <button type="button" class="cs-group-pill ${filterMode === 'all' ? 'active' : ''}" data-qz-mode="all">ทั้งหมด (${st.total})</button>
               <button type="button" class="cs-group-pill ${filterMode === 'todo' ? 'active' : ''}" data-qz-mode="todo">ยังไม่ทำ (${st.total - st.done})</button>
-              <button type="button" class="cs-group-pill ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>
+              ${(examMode === 'instant' || simSubmitted) ? `<button type="button" class="cs-group-pill ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>` : ''}
             </div>
-            ${st.done > 0 ? `<button type="button" class="cs-action-btn" id="qzClearChRunnerBtn">ล้างคำตอบบทนี้</button>` : ''}
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
+              ${!cfg.isRandomSession ? `
+                <button type="button" class="cs-action-btn" id="qzToggleShuffleBtn" title="สลับโหมดสุ่มข้อกับเรียงตามหนังสือ">
+                  ${this.state.quizShuffleOn ? '🔀 กำลังสุ่มลำดับข้อ' : '🔢 เรียงตามหนังสือ'}
+                </button>
+                <button type="button" class="cs-action-btn" id="qzReshuffleBtn" title="สุ่มเรียงลำดับข้อรอบใหม่">🎲 สุ่มรอบใหม่</button>
+              ` : ''}
+              <button type="button" class="cs-action-btn" id="qzToggleSimModeBtn" title="สลับระหว่างติ๊กเฉลยทันทีกับจำลองสอบจริง">
+                ${examMode === 'sim' ? '📋 โหมดจำลองสอบ' : '⚡ เฉลยทันที'}
+              </button>
+              <button type="button" class="cs-action-btn" id="qzToggleTimerBtn">${this.state.quizTimerOn ? '⏸ ซ่อนเวลา' : '⏱ จับเวลา'}</button>
+              ${st.done > 0 ? `<button type="button" class="cs-action-btn" id="qzClearChRunnerBtn">ล้างคำตอบ</button>` : ''}
+            </div>
           </div>
+
+          ${(examMode === 'sim' && simSubmitted) ? `
+            <div class="qz-sim-summary">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+                <div>
+                  <div style="font-size:0.86rem; font-weight:700; color:var(--text-muted);">📊 สรุปผลคะแนนโหมดจำลองสอบ</div>
+                  <div class="qz-sim-score-big">${st.correct} / ${st.total} ข้อ (${st.total ? Math.round((st.correct / st.total) * 100) : 0}%)</div>
+                  <div style="font-size:0.86rem; color:var(--text-secondary);">ทำไป ${st.done} ข้อ · ถูก ${st.correct} · ผิด ${st.wrong}${this.state.quizTimerSec > 0 ? ` · ใช้เวลา ${this.formatTimerClock(this.state.quizTimerSec)}` : ''}</div>
+                </div>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                  <button type="button" class="cs-group-pill" data-qz-mode="wrong">ทบทวนเฉพาะข้อที่ผิด (${st.wrong})</button>
+                  <button type="button" class="btn-dark-pill" id="qzSimRestartBtn">ทำรอบใหม่อีกครั้ง</button>
+                </div>
+              </div>
+            </div>
+          ` : (examMode === 'sim' && !simSubmitted ? `
+            <div class="card" style="padding: 0.72rem 1rem; margin-bottom: 0.85rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+              <span style="font-size:0.86rem; color:var(--text-secondary);">📋 <b>โหมดจำลองสอบจริง:</b> ตอบไว้แล้ว <b>${st.done}/${st.total}</b> ข้อ (ยังไม่เฉลยจนกว่าจะกดส่งคำตอบ)</span>
+              <button type="button" class="btn-lime-pill" id="qzSubmitSimBtn" style="font-size:0.84rem; padding:0.4rem 1rem;">✅ ส่งคำตอบ & ตรวจคะแนนทั้งชุด</button>
+            </div>
+          ` : '')}
 
           ${visibleQs.length === 0 ? `
             <div class="card qz-q-card" style="text-align: center; padding: 2.2rem 1.25rem;">
               <p style="font-size: 1.05rem; font-weight: 700; margin: 0 0 0.75rem 0;">
-                ${filterMode === 'wrong' ? '🎉 ไม่มีข้อที่ตอบผิดในบทนี้แล้ว' : '✅ ทำครบทุกข้อในบทนี้แล้ว'}
+                ${filterMode === 'wrong' ? '🎉 ไม่มีข้อที่ตอบผิดแล้ว' : '✅ ทำครบทุกข้อแล้ว'}
               </p>
               <button type="button" class="btn-dark-pill" data-qz-mode="all">แสดงข้อสอบทั้งหมด (${st.total} ข้อ)</button>
             </div>
           ` : `
             <div class="card qz-q-card" id="qzActiveCard">
               <div class="qz-q-head">
-                <span class="qz-q-badge">ข้อ ${q.no} / ${st.total}${q.origNo !== q.no ? ` (ข้อ ${q.origNo} ในบท)` : ''}</span>
-                ${q.subtopic ? `<span class="qz-subtopic-pill">${this.escapeHtml(q.subtopic)}</span>` : ''}
+                <div style="display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
+                  <span class="qz-q-badge">ข้อ ${q.displayNo} / ${st.total}</span>
+                  ${q._sourceLabel ? `<span class="qz-subtopic-pill">${this.escapeHtml(q._sourceLabel)}</span>` : (q.subtopic ? `<span class="qz-subtopic-pill">${this.escapeHtml(q.subtopic)}</span>` : (q.origNo ? `<span class="qz-src-badge">ข้อ ${q.origNo} (${q.day === 'day2' ? 'วันที่สอง' : 'วันแรก'})</span>` : ''))}
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;">
+                  ${ansTag}${choiceTag}
+                </div>
               </div>
 
               ${(q.caseText || (q.caseImages && q.caseImages.length)) ? `
@@ -1971,7 +2617,7 @@ ${this.escapeHtml(df.rawText)}
                   ${q.caseText ? `<div>${this.escapeHtml(q.caseText)}</div>` : ''}
                   ${(q.caseImages && q.caseImages.length) ? `
                     <div class="qz-fig-wrap">
-                      ${q.caseImages.map(src => `<img src="${src}" alt="ภาพประกอบกรณีศึกษาข้อ ${q.no}" class="qz-fig-img" loading="lazy">`).join('')}
+                      ${q.caseImages.map(src => `<img src="${src}" alt="ภาพประกอบกรณีศึกษา" class="qz-fig-img" loading="lazy">`).join('')}
                     </div>
                   ` : ''}
                 </div>
@@ -1981,21 +2627,25 @@ ${this.escapeHtml(df.rawText)}
 
               ${(q.images && q.images.length) ? `
                 <div class="qz-fig-wrap">
-                  ${q.images.map(src => `<img src="${src}" alt="ภาพประกอบคำถามข้อ ${q.no}" class="qz-fig-img">`).join('')}
+                  ${q.images.map(src => `<img src="${src}" alt="ภาพประกอบคำถาม" class="qz-fig-img">`).join('')}
                 </div>
               ` : ''}
 
-              <div class="qz-options-list" role="radiogroup" aria-label="ตัวเลือกคำถามข้อ ${q.no}">
+              <div class="qz-options-list" role="radiogroup" aria-label="ตัวเลือกคำถามข้อ ${q.displayNo}">
                 ${(q.options || []).map((optText, i) => {
                   const key = labels[i] || String(i + 1);
                   let optCls = 'qz-opt-btn';
-                  if (isAnswered) {
-                    if (i === q.answerIdx) optCls += ' is-correct-choice';
-                    else if (i === selectedIdx) optCls += ' is-wrong-choice';
+                  if (examMode === 'sim' && !simSubmitted) {
+                    if (i === selectedIdx) optCls += ' is-selected-sim';
+                  } else if (showInstantReveal) {
+                    const isRightOpt = validIndices.includes(i) || (isNoAnswer && i === q.bestGuess);
+                    if (isRightOpt) optCls += ' is-correct-choice';
+                    else if (i === selectedIdx && !isNoAnswer) optCls += ' is-wrong-choice';
                     else optCls += ' is-dimmed';
                   }
+                  const locked = (examMode === 'instant' && isAnswered) || simSubmitted;
                   return `
-                    <button type="button" class="${optCls}" data-qz-opt="${i}" ${isAnswered ? 'aria-disabled="true"' : ''}>
+                    <button type="button" class="${optCls}" data-qz-opt="${i}" ${locked ? 'aria-disabled="true"' : ''}>
                       <span class="qz-opt-key">${this.escapeHtml(key)}</span>
                       <span class="qz-opt-text">${this.escapeHtml(optText)}</span>
                     </button>
@@ -2003,19 +2653,26 @@ ${this.escapeHtml(df.rawText)}
                 }).join('')}
               </div>
 
-              ${isAnswered ? `
+              ${showInstantReveal ? `
                 <div class="qz-feedback-card ${isCorrect ? 'is-ok' : 'is-bad'}" role="status" aria-live="polite">
                   <div class="qz-feedback-banner">
-                    <span>${isCorrect ? `✓ ถูกต้อง! (ข้อ ${this.escapeHtml(correctLabel)})` : `✕ ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabel)}.`}</span>
-                    <button type="button" class="cs-action-btn" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.25rem 0.65rem;">ทำใหม่ข้อนี้</button>
+                    <span>
+                      ${isNoAnswer
+                        ? `ⓘ เฉลยทางการระบุ: ไม่มีคำตอบ (ไม่หักคะแนน)${typeof q.bestGuess === 'number' ? ` · ใกล้เคียงสุด: ข้อ ${labels[q.bestGuess]}` : ''}`
+                        : (isCorrect
+                          ? `✓ ถูกต้อง! (ข้อ ${this.escapeHtml(correctLabelsText)}${validIndices.length > 1 ? ' · ตอบได้หลายข้อ' : ''})`
+                          : `✕ ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabelsText)}`)}
+                    </span>
+                    ${examMode === 'instant' ? `<button type="button" class="cs-action-btn" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.25rem 0.65rem;">ทำใหม่ข้อนี้</button>` : ''}
                   </div>
                   <div class="qz-feedback-body">
-                    ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabel}`)}
+                    ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabelsText}`)}
                     ${(q.expImages && q.expImages.length) ? `
                       <div class="qz-fig-wrap" style="margin-top: 0.75rem; margin-bottom: 0;">
-                        ${q.expImages.map(src => `<img src="${src}" alt="ภาพประกอบเฉลยข้อ ${q.no}" class="qz-fig-img" loading="lazy">`).join('')}
+                        ${q.expImages.map(src => `<img src="${src}" alt="ภาพประกอบเฉลย" class="qz-fig-img" loading="lazy">`).join('')}
                       </div>
                     ` : ''}
+                    ${this.buildDataRefHtml(q)}
                   </div>
                 </div>
               ` : ''}
@@ -2036,19 +2693,15 @@ ${this.escapeHtml(df.rawText)}
         </div>
       `;
 
-      // Attach listeners
       const activeCard = document.getElementById('qzActiveCard');
       if (activeCard) this.enhanceAbbreviations(activeCard);
 
-      document.getElementById('qzToggleMapBtn')?.addEventListener('click', () => {
-        showMap = !showMap;
-        renderBody();
-      });
+      document.getElementById('qzToggleMapBtn')?.addEventListener('click', () => { showMap = !showMap; renderBody(); });
 
       c.querySelectorAll('[data-qz-jump]').forEach(btn => {
         btn.addEventListener('click', () => {
-          currentNo = parseInt(btn.getAttribute('data-qz-jump'), 10);
-          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          currentPos = parseInt(btn.getAttribute('data-qz-jump'), 10);
+          window.history.replaceState(null, '', `${cfg.baseHash}&q=${currentPos}`);
           renderBody();
         });
       });
@@ -2061,16 +2714,76 @@ ${this.escapeHtml(df.rawText)}
         });
       });
 
+      document.getElementById('qzToggleShuffleBtn')?.addEventListener('click', () => {
+        this.state.quizShuffleOn = !this.state.quizShuffleOn;
+        this.saveQuizPrefs();
+        qs = this.getOrderedQuestions(cfg.setKey, cfg.rawQuestions);
+        currentPos = 1;
+        renderBody();
+      });
+
+      document.getElementById('qzReshuffleBtn')?.addEventListener('click', () => {
+        this.state.quizShuffleOn = true;
+        qs = this.reshuffleSet(cfg.setKey, cfg.rawQuestions);
+        currentPos = 1;
+        window.history.replaceState(null, '', `${cfg.baseHash}&q=1`);
+        renderBody();
+      });
+
+      document.getElementById('qzToggleSimModeBtn')?.addEventListener('click', () => {
+        examMode = examMode === 'instant' ? 'sim' : 'instant';
+        this.state.quizExamMode = examMode;
+        simSubmitted = false;
+        renderBody();
+      });
+
+      document.getElementById('qzToggleTimerBtn')?.addEventListener('click', () => {
+        this.state.quizTimerOn = !this.state.quizTimerOn;
+        if (this.state.quizTimerOn) startTimerIfNeeded();
+        else this.clearQuizTimer();
+        renderBody();
+      });
+
+      document.getElementById('qzSubmitSimBtn')?.addEventListener('click', () => {
+        simSubmitted = true;
+        if (cfg.isRandomSession) this.state.quizRandomSession.simSubmitted = true;
+        Object.entries(getAnsStore()).forEach(([id, v]) => { this.state.quizAnswers[id] = v; });
+        this.saveQuizAnswers();
+        this.clearQuizTimer();
+        renderBody();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      document.getElementById('qzSimRestartBtn')?.addEventListener('click', () => {
+        simSubmitted = false;
+        if (cfg.isRandomSession) {
+          this.state.quizRandomSession.simSubmitted = false;
+          this.state.quizRandomSession.simAnswers = {};
+        } else {
+          this._localSimAnswers = {};
+        }
+        this.state.quizTimerSec = 0;
+        filterMode = 'all';
+        currentPos = 1;
+        startTimerIfNeeded();
+        renderBody();
+      });
+
       c.querySelectorAll('[data-qz-opt]').forEach(btn => {
         btn.addEventListener('click', () => {
-          if (typeof this.state.quizAnswers[q.id] === 'number') return;
           const picked = parseInt(btn.getAttribute('data-qz-opt'), 10);
-          this.state.quizAnswers[q.id] = picked;
-          this.saveQuizAnswers();
-          renderBody();
-          requestAnimationFrame(() => {
-            document.querySelector('.qz-feedback-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          });
+          if (examMode === 'instant') {
+            if (typeof this.state.quizAnswers[q.id] === 'number') return;
+            this.state.quizAnswers[q.id] = picked;
+            this.saveQuizAnswers();
+            renderBody();
+            requestAnimationFrame(() => {
+              document.querySelector('.qz-feedback-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+          } else if (!simSubmitted) {
+            getAnsStore()[q.id] = picked;
+            renderBody();
+          }
         });
       });
 
@@ -2081,48 +2794,56 @@ ${this.escapeHtml(df.rawText)}
       });
 
       document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
-        qs.forEach(item => { delete this.state.quizAnswers[item.id]; });
-        this.saveQuizAnswers();
+        const store = getAnsStore();
+        qs.forEach(item => { delete store[item.id]; });
+        if (examMode === 'instant') this.saveQuizAnswers();
+        simSubmitted = false;
+        if (cfg.isRandomSession) this.state.quizRandomSession.simSubmitted = false;
         filterMode = 'all';
         this.state.quizFilter = 'all';
-        currentNo = 1;
+        currentPos = 1;
         renderBody();
       });
 
       document.getElementById('qzPrevBtn')?.addEventListener('click', () => {
         if (!prevQ) return;
-        currentNo = prevQ.no;
-        window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+        currentPos = prevQ.displayNo;
+        window.history.replaceState(null, '', `${cfg.baseHash}&q=${currentPos}`);
         renderBody();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
 
       document.getElementById('qzNextBtn')?.addEventListener('click', () => {
         if (!nextQ) return;
-        currentNo = nextQ.no;
-        window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+        currentPos = nextQ.displayNo;
+        window.history.replaceState(null, '', `${cfg.baseHash}&q=${currentPos}`);
         renderBody();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
 
-      // Keyboard navigation (1-5 to pick option, Left/Right arrows for prev/next)
       this.clearQuizKeyHandler();
+      startTimerIfNeeded();
       this._quizKeyHandler = (e) => {
         if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
         if (e.key === 'ArrowRight' && nextQ) {
-          currentNo = nextQ.no;
-          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          currentPos = nextQ.displayNo;
+          window.history.replaceState(null, '', `${cfg.baseHash}&q=${currentPos}`);
           renderBody();
         } else if (e.key === 'ArrowLeft' && prevQ) {
-          currentNo = prevQ.no;
-          window.history.replaceState(null, '', `#/quiz?chapter=${ch.id}&q=${currentNo}`);
+          currentPos = prevQ.displayNo;
+          window.history.replaceState(null, '', `${cfg.baseHash}&q=${currentPos}`);
           renderBody();
-        } else if (/^[1-5]$/.test(e.key) && typeof this.state.quizAnswers[q.id] !== 'number') {
+        } else if (/^[1-5]$/.test(e.key)) {
           const idx = parseInt(e.key, 10) - 1;
           if (idx >= 0 && idx < (q.options || []).length) {
-            this.state.quizAnswers[q.id] = idx;
-            this.saveQuizAnswers();
-            renderBody();
+            if (examMode === 'instant' && typeof this.state.quizAnswers[q.id] !== 'number') {
+              this.state.quizAnswers[q.id] = idx;
+              this.saveQuizAnswers();
+              renderBody();
+            } else if (examMode === 'sim' && !simSubmitted) {
+              getAnsStore()[q.id] = idx;
+              renderBody();
+            }
           }
         }
       };
