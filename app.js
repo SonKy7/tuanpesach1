@@ -12,6 +12,7 @@ const App = {
     quizShuffle: {},
     quizShuffleOn: true,
     quizHubTab: 'chapter',
+    quizChapterView: 'chapter', // 'chapter' | 'disease'
     quizExamMode: 'instant', // 'instant' | 'sim'
     quizTimerOn: false,
     quizTimerSec: 0,
@@ -432,6 +433,8 @@ ${this.escapeHtml(df.rawText)}
       this.highlightNav('quiz');
       const params = new URLSearchParams(query);
       const chapterId = params.get('chapter');
+      const subParam = params.get('sub') || '';
+      const diseaseId = params.get('disease');
       const yearId = params.get('year');
       const dayParam = params.get('day') || 'all';
       const isRandom = params.get('random') === '1';
@@ -439,13 +442,18 @@ ${this.escapeHtml(df.rawText)}
       if (tabParam && ['chapter', 'year', 'random'].includes(tabParam)) {
         this.state.quizHubTab = tabParam;
       }
+      const orderParam = params.get('order');
+      if (orderParam === 'orig') { this.state.quizShuffleOn = false; this.saveQuizPrefs(); }
+      else if (orderParam === 'shuffle') { this.state.quizShuffleOn = true; this.saveQuizPrefs(); }
       const qNo = parseInt(params.get('q') || '0', 10);
       if (isRandom) {
         this.renderRandomQuizRunner(container, qNo);
+      } else if (diseaseId) {
+        this.renderDiseaseQuizRunner(container, diseaseId, qNo);
       } else if (yearId) {
         this.renderPastExamRunner(container, yearId, dayParam, qNo);
       } else if (chapterId) {
-        this.renderQuizRunner(container, chapterId, qNo);
+        this.renderQuizRunner(container, chapterId, qNo, subParam);
       } else {
         this.renderQuizHub(container);
       }
@@ -1832,6 +1840,71 @@ ${this.escapeHtml(df.rawText)}
     return this.getQuizSetStats(ch?.questions || []);
   },
 
+  qzIcon(name, size = 16) {
+    const p = {
+      search: '<circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.2" y2="16.2"/>',
+      shuffle: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
+      list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
+      chevLeft: '<polyline points="15 18 9 12 15 6"/>',
+      chevRight: '<polyline points="9 18 15 12 9 6"/>',
+      clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+      check: '<polyline points="20 6 9 17 4 12"/>',
+      book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+      layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+      reset: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+    }[name] || '';
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+  },
+
+  qzRingHtml(done, total, size = 44) {
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const stroke = size >= 52 ? 4.5 : 3.8;
+    const r = (size - stroke * 2) / 2;
+    const c = 2 * Math.PI * r;
+    const offset = c * (1 - pct / 100);
+    return `
+      <div class="qz-ring-box" style="width:${size}px;height:${size}px;" title="ทำแล้ว ${done}/${total} ข้อ (${pct}%)">
+        <svg class="qz-ring-svg" width="${size}" height="${size}">
+          <circle class="qz-ring-track" cx="${size/2}" cy="${size/2}" r="${r}" stroke-width="${stroke}"/>
+          <circle class="qz-ring-fill" cx="${size/2}" cy="${size/2}" r="${r}" stroke-width="${stroke}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>
+        </svg>
+        <span class="qz-ring-pct ${size >= 52 ? 'is-lg' : ''}">${pct}%</span>
+      </div>
+    `;
+  },
+
+  getDiseaseDecks() {
+    const chData = window.CC1_QUIZ_DATA || { chapters: [] };
+    const peData = window.CC1_PAST_EXAM_DATA || { chapters: [] };
+    const map = new Map();
+    const pushQ = (q, srcTitle) => {
+      const tag = q.topicTag || (q.dataRef && q.dataRef.topicId ? {
+        id: q.dataRef.topicId,
+        title: q.dataRef.topicTitle || q.dataRef.topicId,
+        groupId: q.dataRef.groupId || '',
+        groupName: q.dataRef.groupName || ''
+      } : null);
+      if (!tag || !tag.id) return;
+      if (!map.has(tag.id)) {
+        map.set(tag.id, {
+          id: tag.id,
+          title: tag.title || tag.id,
+          groupId: tag.groupId || '',
+          groupName: tag.groupName || '',
+          questions: []
+        });
+      }
+      map.get(tag.id).questions.push({ ...q, _sourceLabel: srcTitle });
+    };
+    (chData.chapters || []).forEach(ch => {
+      (ch.questions || []).forEach(q => pushQ(q, `บท ${ch.chapterNum}. ${ch.title}`));
+    });
+    (peData.chapters || []).forEach(yr => {
+      (yr.questions || []).forEach(q => pushQ(q, `${yr.title} · ${q.day === 'day2' ? 'วันที่สอง' : 'วันแรก'} ข้อ ${q.origNo}`));
+    });
+    return Array.from(map.values()).sort((a, b) => b.questions.length - a.questions.length);
+  },
+
   shuffleArray(arr) {
     const out = [...arr];
     for (let i = out.length - 1; i > 0; i--) {
@@ -1881,9 +1954,9 @@ ${this.escapeHtml(df.rawText)}
     return `
       <div class="qz-dataref-box">
         <div class="qz-dataref-head">
-          <span class="qz-dataref-title">📖 เนื้อหาอ้างอิง: ${this.escapeHtml(ref.topicTitle || ref.topicId)}${secLabel}</span>
-          <a href="#/summary?topic=${this.escapeHtml(ref.topicId)}&hl=${hlParam}" class="qz-dataref-link">
-            เปิดอ่านบทเรียนตรงจุดนี้ →
+          <span class="qz-dataref-title">เนื้อหาอ้างอิง: ${this.escapeHtml(ref.topicTitle || ref.topicId)}${secLabel}</span>
+          <a href="#/summary?topic=${this.escapeHtml(ref.topicId)}&hl=${hlParam}" class="qz-btn-outline" style="padding: 0.28rem 0.68rem; font-size: 0.78rem;">
+            ${this.qzIcon('book', 13)} อ่านในบทเรียน
           </a>
         </div>
         ${ref.quote ? `<div class="qz-dataref-quote">“${this.escapeHtml(ref.quote)}”</div>` : ''}
@@ -1896,6 +1969,7 @@ ${this.escapeHtml(df.rawText)}
     const chapters = chData.chapters || [];
     const peData = window.CC1_PAST_EXAM_DATA || { chapters: [], totalQuestions: 0 };
     const years = peData.chapters || [];
+    const diseases = this.getDiseaseDecks();
     const answers = this.state.quizAnswers || {};
     const activeTab = this.state.quizHubTab || 'chapter';
 
@@ -1909,93 +1983,168 @@ ${this.escapeHtml(df.rawText)}
     const pleCount = years.filter(y => y.track === 'ple').length;
 
     c.innerHTML = `
-      <div class="card qz-header-card">
-        <div class="qz-header-top">
-          <div>
-            <h1 class="qz-title">📝 คลังข้อสอบ & ระบบสุ่มข้อสอบ PLE-CC1</h1>
-            <p class="qz-sub">ครบ ${chapters.length} บท (${allChapterQs.length} ข้อ) + ข้อสอบย้อนหลังปี 2556–2567 (${allYearQs.length} ข้อ) · สุ่มลำดับข้ออัตโนมัติ พร้อมเฉลยอิงบทเรียน</p>
+      <div class="qz-hub-wrap">
+        <div class="qz-panel">
+          <div class="qz-header-top">
+            <div>
+              <h1 class="qz-title">คลังข้อสอบ PLE-CC1</h1>
+              <p class="qz-sub">แยกบท (${chapters.length} บท · ${allChapterQs.length} ข้อ) · แยกตามโรค (${diseases.length} หัวข้อ) · ย้อนหลังรายปี (${allYearQs.length} ข้อ)</p>
+            </div>
+            <div class="qz-overview-metrics">
+              ${this.qzRingHtml(stAll.done, stAll.total, 54)}
+              <div class="qz-stats-strip">
+                <span class="qz-stat-pill">ทำแล้ว ${stAll.done}/${stAll.total}</span>
+                <span class="qz-stat-pill is-success">ถูก ${stAll.correct}</span>
+                <span class="qz-stat-pill is-danger">ผิด ${stAll.wrong}</span>
+                ${stAll.done > 0 ? `<button type="button" class="qz-btn-soft" id="qzResetAllBtn">${this.qzIcon('reset', 13)} ล้างทั้งหมด</button>` : ''}
+              </div>
+            </div>
           </div>
-          <div class="qz-stats-strip">
-            <span class="qz-stat-pill">ทำแล้ว ${stAll.done} / ${stAll.total} ข้อ</span>
-            <span class="qz-stat-pill is-success">✓ ถูก ${stAll.correct}</span>
-            <span class="qz-stat-pill is-danger">✕ ผิด ${stAll.wrong}</span>
-            ${stAll.done > 0 ? `<button type="button" class="cs-action-btn" id="qzResetAllBtn">ล้างทั้งหมด</button>` : ''}
+
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+            <div class="qz-seg-tabs" role="tablist" aria-label="ประเภทคลังข้อสอบ">
+              <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'chapter' ? 'active' : ''}" data-qz-tab="chapter">
+                <span>แยกบท &amp; แยกโรค</span>
+                <span class="qz-seg-count">${allChapterQs.length}</span>
+              </button>
+              <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'year' ? 'active' : ''}" data-qz-tab="year">
+                <span>ข้อสอบรายปี (2556–2567)</span>
+                <span class="qz-seg-count">${allYearQs.length}</span>
+              </button>
+              <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'random' ? 'active' : ''}" data-qz-tab="random">
+                <span>สุ่มข้อสอบ (Custom)</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="qz-toolbar-row">
+            <div class="qz-order-control">
+              <span class="qz-order-label">ลำดับข้อสอบ:</span>
+              <div class="qz-seg-mini" role="group" aria-label="เลือกลำดับการทำข้อสอบ">
+                <button type="button" class="qz-seg-mini-btn ${!this.state.quizShuffleOn ? 'active' : ''}" data-hub-order="orig">
+                  ${this.qzIcon('list', 14)} เรียงตามต้นฉบับ
+                </button>
+                <button type="button" class="qz-seg-mini-btn ${this.state.quizShuffleOn ? 'active' : ''}" data-hub-order="shuffle">
+                  ${this.qzIcon('shuffle', 14)} สุ่มลำดับข้อ
+                </button>
+              </div>
+            </div>
+            <span style="font-size:0.8rem; color:var(--qb-muted);">
+              ${this.state.quizShuffleOn ? 'เข้าทำแต่ละครั้งระบบจะสุ่มเรียงลำดับข้อให้' : 'เข้าทำจะเรียงข้อที่ 1, 2, 3... ตามหนังสือ/ข้อสอบต้นฉบับ'}
+            </span>
           </div>
         </div>
 
-        <div class="qz-tabs-bar" role="tablist" aria-label="โหมดคลังข้อสอบ">
-          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'chapter' ? 'active' : ''}" data-qz-tab="chapter">
-            📖 ข้อสอบแยกบท (${chapters.length} บท · ${allChapterQs.length})
-          </button>
-          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'year' ? 'active' : ''}" data-qz-tab="year">
-            🗓️ ข้อสอบแยกปี 2556–2567 (${years.length} ชุด · ${allYearQs.length})
-          </button>
-          <button type="button" role="tab" class="qz-tab-btn ${activeTab === 'random' ? 'active' : ''}" data-qz-tab="random">
-            🎲 สุ่มข้อสอบ (Custom)
-          </button>
-        </div>
+        <div id="qzTabContent"></div>
       </div>
-
-      <div id="qzTabContent"></div>
     `;
 
     const tabBox = document.getElementById('qzTabContent');
 
     const renderChapterTab = () => {
+      const chapterView = this.state.quizChapterView || 'chapter';
+      // Unique groups for Disease dropdown
+      const diseaseGroups = Array.from(new Set(diseases.map(d => d.groupName).filter(Boolean)));
       tabBox.innerHTML = `
-        <div class="card qz-header-card" style="padding: 0.9rem 1.2rem; margin-bottom: 1rem;">
-          <div class="qz-filter-bar" style="margin-top: 0;">
-            <div class="cs-search-wrap" style="flex: 1 1 240px;">
-              <input type="search" id="qzChSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาชื่อบทหรือหัวข้อ (เช่น หัวใจ, ติดเชื้อ, เภสัชวิเคราะห์, PK)..." autocomplete="off">
+        <div class="qz-panel" style="padding: 1rem 1.25rem;">
+          <div class="qz-filter-bar">
+            <div class="qz-seg-mini" role="group" aria-label="มุมมองแยกบทหรือแยกโรค">
+              <button type="button" class="qz-seg-mini-btn ${chapterView === 'chapter' ? 'active' : ''}" data-ch-view="chapter">แยกตาม 20 บท</button>
+              <button type="button" class="qz-seg-mini-btn ${chapterView === 'disease' ? 'active' : ''}" data-ch-view="disease">แยกตามโรค (${diseases.length})</button>
             </div>
-            <div class="qz-cat-pills" id="qzCatPills">
-              <button type="button" class="cs-group-pill active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
-              <button type="button" class="cs-group-pill" data-qz-cat="clinical">โรคและเภสัชบำบัด (${clinicalCount})</button>
-              <button type="button" class="cs-group-pill" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
+            <div class="qz-search-box">
+              <input type="search" id="qzChSearchInput" class="qz-search-input" placeholder="${chapterView === 'disease' ? 'ค้นหาชื่อโรคหรือหัวข้อ เช่น Hypertension, Asthma, PK...' : 'ค้นหาชื่อบทหรือโรคในบท...'}" autocomplete="off">
+              <span class="qz-search-btn-sq">${this.qzIcon('search', 16)}</span>
             </div>
+            ${chapterView === 'chapter' ? `
+              <div class="qz-cat-pills" id="qzCatPills">
+                <button type="button" class="qz-btn-soft active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
+                <button type="button" class="qz-btn-soft" data-qz-cat="clinical">กลุ่มโรค (${clinicalCount})</button>
+                <button type="button" class="qz-btn-soft" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
+              </div>
+            ` : `
+              <select id="qzDiseaseGroupSelect" class="qz-select" aria-label="กรองตามหมวดโรค">
+                <option value="all">ทุกหมวด (${diseases.length} หัวข้อ)</option>
+                ${diseaseGroups.map(gn => `<option value="${this.escapeHtml(gn)}">${this.escapeHtml(gn)}</option>`).join('')}
+              </select>
+            `}
           </div>
         </div>
 
-        <div id="qzEmptyHub" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
-          ไม่พบบทข้อสอบที่ตรงกับคำค้นหา
+        <div id="qzEmptyHub" class="qz-panel" style="display: none; text-align: center; padding: 1.5rem; color: var(--qb-muted);">
+          ไม่พบรายการที่ตรงกับคำค้นหา
         </div>
 
         <div class="qz-chapter-grid" id="qzChapterGrid">
-          ${chapters.map(ch => {
+          ${chapterView === 'chapter' ? chapters.map(ch => {
             const st = this.getChapterQuizStats(ch);
-            const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
-            const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
-            const btnLabel = st.done === 0 ? 'เริ่มทำ (สุ่มข้อ)' : (st.done < st.total ? `ทำต่อ (${st.done}/${st.total})` : 'ทบทวนข้อสอบ');
-            const searchBlob = `${ch.chapterNum} ${ch.title} ${ch.id} ${(ch.questions || []).slice(0, 10).map(q => q.subtopic || '').join(' ')}`.toLowerCase();
+            // Distinct subtopics inside this chapter
+            const subMap = new Map();
+            (ch.questions || []).forEach(q => {
+              const s = q.subtopic;
+              if (s) subMap.set(s, (subMap.get(s) || 0) + 1);
+            });
+            const subs = Array.from(subMap.entries());
+            const searchBlob = `${ch.chapterNum} ${ch.title} ${ch.id} ${subs.map(s=>s[0]).join(' ')}`.toLowerCase();
             return `
               <article class="qz-ch-card" data-qz-cat="${ch.category}" data-qz-search="${this.escapeHtml(searchBlob)}">
-                <div>
-                  <div class="qz-ch-head">
-                    <div class="qz-ch-num">${ch.icon}</div>
-                    <div style="min-width: 0; flex: 1;">
-                      <h2 class="qz-ch-title">บทที่ ${ch.chapterNum}. ${this.escapeHtml(ch.title)}</h2>
-                      <div class="qz-ch-meta">
-                        <span>${st.total} ข้อ</span>
-                        ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done} ข้อ</span>` : '<span>· ยังไม่ได้ทำ</span>'}
-                      </div>
+                <div class="qz-ch-head">
+                  <div style="min-width: 0; flex: 1;">
+                    <div style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.3rem;">
+                      <span class="qz-ch-badge-num">${String(ch.chapterNum).padStart(2, '0')}</span>
+                      <span class="qz-ch-meta">${ch.category === 'clinical' ? 'เภสัชบำบัด' : 'เภสัชศาสตร์'} · ${st.total} ข้อ</span>
+                    </div>
+                    <h2 class="qz-ch-title">${this.escapeHtml(ch.title)}</h2>
+                    <div class="qz-ch-meta">
+                      ${st.done > 0 ? `<span>ทำแล้ว ${st.done}/${st.total} · ถูก ${st.correct}</span>` : '<span>ยังไม่ได้เริ่มทำ</span>'}
                     </div>
                   </div>
+                  ${this.qzRingHtml(st.done, st.total, 46)}
                 </div>
-                <div class="qz-ch-prog-wrap">
-                  <div class="qz-ch-prog-row">
-                    <span>คืบหน้า ${st.done}/${st.total}</span>
-                    <span>${st.total ? Math.round((st.done / st.total) * 100) : 0}%</span>
+
+                ${subs.length > 1 ? `
+                  <div class="qz-disease-chips">
+                    ${subs.slice(0, 6).map(([sname, scnt]) => `
+                      <a href="#/quiz?chapter=${ch.id}&sub=${encodeURIComponent(sname)}" class="qz-disease-chip" title="ฝึกเฉพาะหัวข้อ ${this.escapeHtml(sname)}">
+                        <span>${this.escapeHtml(sname)}</span>
+                        <span style="opacity:0.65;">${scnt}</span>
+                      </a>
+                    `).join('')}
                   </div>
-                  <div class="qz-prog-track" aria-hidden="true">
-                    <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
-                    <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
+                ` : (subs.length === 1 ? `
+                  <div class="qz-disease-chips">
+                    <span class="qz-disease-chip" style="cursor:default;">${this.escapeHtml(subs[0][0])} · ${subs[0][1]} ข้อ</span>
                   </div>
+                ` : '')}
+
+                <div class="qz-ch-actions">
+                  <a href="#/quiz?chapter=${ch.id}" class="qz-btn-solid" style="flex: 1;">
+                    ${st.done === 0 ? 'เริ่มทำข้อสอบ' : (st.done < st.total ? `ทำต่อ (${st.done}/${st.total})` : 'ทบทวนทั้งหมด')}
+                  </a>
+                  ${st.done > 0 ? `<button type="button" class="qz-btn-soft" data-qz-clear-ch="${ch.id}">รีเซ็ต</button>` : ''}
+                </div>
+              </article>
+            `;
+          }).join('') : diseases.map(dis => {
+            const st = this.getQuizSetStats(dis.questions);
+            const searchBlob = `${dis.title} ${dis.id} ${dis.groupName}`.toLowerCase();
+            return `
+              <article class="qz-ch-card" data-qz-grp="${this.escapeHtml(dis.groupName || '')}" data-qz-search="${this.escapeHtml(searchBlob)}">
+                <div class="qz-ch-head">
+                  <div style="min-width: 0; flex: 1;">
+                    ${dis.groupName ? `<div class="qz-ch-meta" style="margin-bottom:0.25rem; color:var(--qb-blue); font-weight:700;">${this.escapeHtml(dis.groupName)}</div>` : ''}
+                    <h2 class="qz-ch-title">${this.escapeHtml(dis.title)}</h2>
+                    <div class="qz-ch-meta">
+                      <span>คลังรวม ${st.total} ข้อ</span>
+                      ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done}</span>` : ''}
+                    </div>
+                  </div>
+                  ${this.qzRingHtml(st.done, st.total, 46)}
                 </div>
                 <div class="qz-ch-actions">
-                  <a href="#/quiz?chapter=${ch.id}" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.86rem;">
-                    ${btnLabel}
+                  <a href="#/quiz?disease=${encodeURIComponent(dis.id)}" class="qz-btn-solid" style="flex:1;">
+                    ${st.done === 0 ? `ฝึกหัวข้อนี้ (${st.total} ข้อ)` : `ทำต่อ (${st.done}/${st.total})`}
                   </a>
-                  ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-qz-clear-ch="${ch.id}">รีเซ็ต</button>` : ''}
                 </div>
               </article>
             `;
@@ -2003,17 +2152,28 @@ ${this.escapeHtml(df.rawText)}
         </div>
       `;
 
+      tabBox.querySelectorAll('[data-ch-view]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.state.quizChapterView = btn.getAttribute('data-ch-view') || 'chapter';
+          renderChapterTab();
+        });
+      });
+
       const searchInput = document.getElementById('qzChSearchInput');
       const catPills = document.getElementById('qzCatPills');
+      const grpSelect = document.getElementById('qzDiseaseGroupSelect');
       const cards = Array.from(tabBox.querySelectorAll('.qz-ch-card'));
       const emptyEl = document.getElementById('qzEmptyHub');
       let activeCat = 'all';
+      let activeGrp = 'all';
 
       const applyHubFilter = () => {
         const q = (searchInput?.value || '').trim().toLowerCase();
         let shown = 0;
         cards.forEach(card => {
-          const catOk = activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat;
+          const catOk = chapterView === 'chapter'
+            ? (activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat)
+            : (activeGrp === 'all' || card.getAttribute('data-qz-grp') === activeGrp);
           const txtOk = !q || (card.getAttribute('data-qz-search') || '').includes(q);
           const vis = catOk && txtOk;
           card.classList.toggle('is-hidden', !vis);
@@ -2023,10 +2183,11 @@ ${this.escapeHtml(df.rawText)}
       };
 
       searchInput?.addEventListener('input', applyHubFilter);
-      catPills?.querySelectorAll('.cs-group-pill').forEach(btn => {
+      grpSelect?.addEventListener('change', (e) => { activeGrp = e.target.value; applyHubFilter(); });
+      catPills?.querySelectorAll('[data-qz-cat]').forEach(btn => {
         btn.addEventListener('click', () => {
           activeCat = btn.getAttribute('data-qz-cat') || 'all';
-          catPills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
+          catPills.querySelectorAll('[data-qz-cat]').forEach(p => p.classList.toggle('active', p === btn));
           applyHubFilter();
         });
       });
@@ -2044,24 +2205,25 @@ ${this.escapeHtml(df.rawText)}
 
     const renderYearTab = () => {
       if (!years.length) {
-        tabBox.innerHTML = `<div class="card" style="padding: 1.5rem; text-align:center;">กำลังเตรียมข้อมูลข้อสอบแยกปี...</div>`;
+        tabBox.innerHTML = `<div class="qz-panel" style="text-align:center;">ไม่พบข้อสอบรายปี</div>`;
         return;
       }
       tabBox.innerHTML = `
-        <div class="card qz-header-card" style="padding: 0.9rem 1.2rem; margin-bottom: 1rem;">
-          <div class="qz-filter-bar" style="margin-top: 0;">
-            <div class="cs-search-wrap" style="flex: 1 1 240px;">
-              <input type="search" id="qzYrSearchInput" class="cs-search-input" placeholder="🔍 ค้นหาปี พ.ศ. หรือชุดข้อสอบ (เช่น 2566, 2561, PLE-CC1, MCQ)..." autocomplete="off">
+        <div class="qz-panel" style="padding: 1rem 1.25rem;">
+          <div class="qz-filter-bar">
+            <div class="qz-search-box">
+              <input type="search" id="qzYrSearchInput" class="qz-search-input" placeholder="ค้นหาปี พ.ศ. หรือชุดข้อสอบ เช่น 2566, 2561, PLE-CC1, MCQ..." autocomplete="off">
+              <span class="qz-search-btn-sq">${this.qzIcon('search', 16)}</span>
             </div>
             <div class="qz-cat-pills" id="qzYrCatPills">
-              <button type="button" class="cs-group-pill active" data-yr-cat="all">ทั้งหมด (${years.length})</button>
-              <button type="button" class="cs-group-pill" data-yr-cat="mcq">MCQ 2556–2562 (${mcqCount})</button>
-              <button type="button" class="cs-group-pill" data-yr-cat="ple">PLE-CC1 2561–2567 (${pleCount})</button>
+              <button type="button" class="qz-btn-soft active" data-yr-cat="all">ทั้งหมด (${years.length})</button>
+              <button type="button" class="qz-btn-soft" data-yr-cat="mcq">MCQ 2556–2562 (${mcqCount})</button>
+              <button type="button" class="qz-btn-soft" data-yr-cat="ple">PLE-CC1 2561–2567 (${pleCount})</button>
             </div>
           </div>
         </div>
 
-        <div id="qzYrEmpty" class="card" style="display: none; text-align: center; padding: 1.5rem; color: var(--text-muted);">
+        <div id="qzYrEmpty" class="qz-panel" style="display: none; text-align: center; padding: 1.5rem; color: var(--qb-muted);">
           ไม่พบชุดข้อสอบที่ตรงกับคำค้นหา
         </div>
 
@@ -2069,8 +2231,6 @@ ${this.escapeHtml(df.rawText)}
           ${years.map(yr => {
             const qs = yr.questions || [];
             const st = this.getQuizSetStats(qs);
-            const okPct = st.total ? ((st.correct / st.total) * 100).toFixed(1) : 0;
-            const badPct = st.total ? ((st.wrong / st.total) * 100).toFixed(1) : 0;
             const fileKeys = qs.filter(q => q.answerSource === 'file').length;
             const aiKeys = qs.filter(q => q.answerSource === 'ai').length;
             const d1Count = qs.filter(q => q.day === 'day1').length;
@@ -2078,38 +2238,31 @@ ${this.escapeHtml(df.rawText)}
             const searchBlob = `${yr.title} ${yr.year} ${yr.track} ch${yr.chapterNum}`.toLowerCase();
             return `
               <article class="qz-ch-card" data-yr-cat="${yr.track}" data-yr-search="${this.escapeHtml(searchBlob)}">
-                <div>
-                  <div class="qz-ch-head">
-                    <div class="qz-ch-num">${yr.track === 'ple' ? '🎯' : '📘'}</div>
-                    <div style="min-width: 0; flex: 1;">
-                      <h2 class="qz-ch-title">${this.escapeHtml(yr.title)}</h2>
-                      <div class="qz-ch-meta" style="display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.25rem;">
-                        <span>${st.total} ข้อ</span>
-                        ${fileKeys > 0 ? `<span class="qz-src-badge is-file">เฉลยไฟล์ ${fileKeys}</span>` : ''}
-                        ${aiKeys > 0 ? `<span class="qz-src-badge is-ai">AI เฉลย ${aiKeys}</span>` : ''}
-                      </div>
+                <div class="qz-ch-head">
+                  <div style="min-width: 0; flex: 1;">
+                    <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.3rem;">
+                      <span class="qz-ch-badge-num">${yr.year}</span>
+                      <span class="qz-src-badge">${yr.track === 'ple' ? 'PLE-CC1' : 'MCQ'}</span>
+                      ${fileKeys > 0 ? `<span class="qz-src-badge is-file">เฉลยไฟล์ ${fileKeys}</span>` : ''}
+                      ${aiKeys > 0 ? `<span class="qz-src-badge is-ai">AI เฉลย ${aiKeys}</span>` : ''}
+                    </div>
+                    <h2 class="qz-ch-title">${this.escapeHtml(yr.title)}</h2>
+                    <div class="qz-ch-meta">
+                      <span>${st.total} ข้อ</span>
+                      ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done}</span>` : '<span>· ยังไม่ได้ทำ</span>'}
                     </div>
                   </div>
-                </div>
-                <div class="qz-ch-prog-wrap">
-                  <div class="qz-ch-prog-row">
-                    <span>คืบหน้า ${st.done}/${st.total}</span>
-                    <span>${st.done > 0 ? `ถูก ${st.correct} ข้อ` : 'ยังไม่ทำ'}</span>
-                  </div>
-                  <div class="qz-prog-track" aria-hidden="true">
-                    <div class="qz-prog-ok" style="width: ${okPct}%;"></div>
-                    <div class="qz-prog-bad" style="width: ${badPct}%;"></div>
-                  </div>
+                  ${this.qzRingHtml(st.done, st.total, 46)}
                 </div>
                 <div class="qz-ch-actions">
-                  <a href="#/quiz?year=${yr.id}&day=all" class="btn-dark-pill" style="flex: 1; justify-content: center; font-size: 0.84rem;">
+                  <a href="#/quiz?year=${yr.id}&day=all" class="qz-btn-solid" style="flex: 1;">
                     ทำทั้งชุด (${st.total})
                   </a>
                   ${yr.hasDay2 && d2Count > 0 ? `
-                    <a href="#/quiz?year=${yr.id}&day=day1" class="cs-action-btn" title="เฉพาะวันแรก (${d1Count} ข้อ)">วัน 1</a>
-                    <a href="#/quiz?year=${yr.id}&day=day2" class="cs-action-btn" title="เฉพาะวันที่สอง (${d2Count} ข้อ)">วัน 2</a>
+                    <a href="#/quiz?year=${yr.id}&day=day1" class="qz-btn-outline" title="เฉพาะวันแรก (${d1Count} ข้อ)">วัน 1</a>
+                    <a href="#/quiz?year=${yr.id}&day=day2" class="qz-btn-outline" title="เฉพาะวันที่สอง (${d2Count} ข้อ)">วัน 2</a>
                   ` : ''}
-                  ${st.done > 0 ? `<button type="button" class="cs-action-btn" data-yr-clear="${yr.id}">รีเซ็ต</button>` : ''}
+                  ${st.done > 0 ? `<button type="button" class="qz-btn-soft" data-yr-clear="${yr.id}">รีเซ็ต</button>` : ''}
                 </div>
               </article>
             `;
@@ -2135,10 +2288,10 @@ ${this.escapeHtml(df.rawText)}
         if (emptyEl) emptyEl.style.display = shown === 0 ? 'block' : 'none';
       };
       sInput?.addEventListener('input', applyYr);
-      pills?.querySelectorAll('.cs-group-pill').forEach(btn => {
+      pills?.querySelectorAll('[data-yr-cat]').forEach(btn => {
         btn.addEventListener('click', () => {
           act = btn.getAttribute('data-yr-cat') || 'all';
-          pills.querySelectorAll('.cs-group-pill').forEach(p => p.classList.toggle('active', p === btn));
+          pills.querySelectorAll('[data-yr-cat]').forEach(p => p.classList.toggle('active', p === btn));
           applyYr();
         });
       });
@@ -2155,26 +2308,30 @@ ${this.escapeHtml(df.rawText)}
     };
 
     const renderRandomTab = () => {
-      let srcScope = 'all'; // 'all' | 'chapters' | 'years' | 'custom'
-      let dayScope = 'all'; // 'all' | 'day1' | 'day2'
-      let statusScope = 'all'; // 'all' | 'todo' | 'wrong'
+      let srcScope = 'all'; // 'all' | 'years' | 'chapters' | 'diseases' | 'custom'
+      let dayScope = 'all';
+      let statusScope = 'all';
       let chosenChapters = new Set(chapters.map(x => x.id));
       let chosenYears = new Set(years.map(x => x.id));
+      let chosenDiseases = new Set(diseases.slice(0, 8).map(x => x.id));
       let reqCount = 30;
       let examMode = this.state.quizExamMode || 'instant';
       let timerOn = !!this.state.quizTimerOn;
 
       const buildPool = () => {
         let pool = [];
-        const addCh = (ch) => {
-          (ch.questions || []).forEach(q => pool.push({ ...q, _sourceLabel: `บท ${ch.chapterNum}. ${ch.title}` }));
+        const seenIds = new Set();
+        const addQ = (q, label) => {
+          if (seenIds.has(q.id)) return;
+          seenIds.add(q.id);
+          pool.push({ ...q, _sourceLabel: q._sourceLabel || label });
         };
-        const addYr = (yr) => {
-          (yr.questions || []).forEach(q => {
-            if (dayScope !== 'all' && q.day !== dayScope) return;
-            pool.push({ ...q, _sourceLabel: `${yr.title} · ${q.day === 'day2' ? 'วันสอง' : 'วันแรก'} ข้อ ${q.origNo}` });
-          });
-        };
+        const addCh = (ch) => (ch.questions || []).forEach(q => addQ(q, `บท ${ch.chapterNum}. ${ch.title}`));
+        const addYr = (yr) => (yr.questions || []).forEach(q => {
+          if (dayScope !== 'all' && q.day !== dayScope) return;
+          addQ(q, `${yr.title} · ${q.day === 'day2' ? 'วันสอง' : 'วันแรก'} ข้อ ${q.origNo}`);
+        });
+
         if (srcScope === 'all') {
           chapters.forEach(addCh);
           years.forEach(addYr);
@@ -2182,10 +2339,18 @@ ${this.escapeHtml(df.rawText)}
           chapters.forEach(addCh);
         } else if (srcScope === 'years') {
           years.forEach(addYr);
+        } else if (srcScope === 'diseases') {
+          diseases.filter(d => chosenDiseases.has(d.id)).forEach(d => {
+            d.questions.forEach(q => {
+              if (dayScope !== 'all' && q.day && q.day !== dayScope) return;
+              addQ(q, q._sourceLabel || d.title);
+            });
+          });
         } else {
           chapters.filter(ch => chosenChapters.has(ch.id)).forEach(addCh);
           years.filter(yr => chosenYears.has(yr.id)).forEach(addYr);
         }
+
         if (statusScope === 'todo') {
           pool = pool.filter(q => typeof answers[q.id] !== 'number');
         } else if (statusScope === 'wrong') {
@@ -2201,22 +2366,42 @@ ${this.escapeHtml(df.rawText)}
           <div class="qz-rand-panel">
             <div class="qz-rand-section">
               <div class="qz-rand-label">
-                <span>1. เลือกแหล่งข้อสอบ</span>
-                <span class="qz-stat-pill" id="qzPoolCountPill">พบ ${pool.length} ข้อที่ตรงเงื่อนไข</span>
+                <span>1. แหล่งข้อสอบที่จะสุ่ม</span>
+                <span class="qz-stat-pill">พบ ${pool.length} ข้อที่ตรงเงื่อนไข</span>
               </div>
-              <div class="qz-cat-pills" id="qzRandScopePills">
-                <button type="button" class="cs-group-pill ${srcScope === 'all' ? 'active' : ''}" data-scope="all">ทั้งหมดรวมทุกคลัง (${stAll.total})</button>
-                <button type="button" class="cs-group-pill ${srcScope === 'years' ? 'active' : ''}" data-scope="years">เฉพาะข้อสอบแยกปี (${allYearQs.length})</button>
-                <button type="button" class="cs-group-pill ${srcScope === 'chapters' ? 'active' : ''}" data-scope="chapters">เฉพาะข้อสอบแยกบท (${allChapterQs.length})</button>
-                <button type="button" class="cs-group-pill ${srcScope === 'custom' ? 'active' : ''}" data-scope="custom">ติ๊กเลือกเองหลายปี / หลายบท</button>
+              <div class="qz-cat-pills">
+                <button type="button" class="qz-btn-soft ${srcScope === 'all' ? 'active' : ''}" data-scope="all">ทั้งหมด (${stAll.total})</button>
+                <button type="button" class="qz-btn-soft ${srcScope === 'years' ? 'active' : ''}" data-scope="years">ข้อสอบรายปี (${allYearQs.length})</button>
+                <button type="button" class="qz-btn-soft ${srcScope === 'chapters' ? 'active' : ''}" data-scope="chapters">ข้อสอบแยกบท (${allChapterQs.length})</button>
+                <button type="button" class="qz-btn-soft ${srcScope === 'diseases' ? 'active' : ''}" data-scope="diseases">เลือกตามโรค (${diseases.length})</button>
+                <button type="button" class="qz-btn-soft ${srcScope === 'custom' ? 'active' : ''}" data-scope="custom">ติ๊กเลือกหลายปี / หลายบท</button>
               </div>
-              ${srcScope === 'custom' ? `
-                <div style="margin-top: 0.9rem;">
+              ${srcScope === 'diseases' ? `
+                <div style="margin-top:0.85rem;">
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
-                    <b style="font-size:0.84rem;">🗓️ ข้อสอบแยกปี (ติ๊กเลือกได้หลายปี)</b>
-                    <div style="display:flex; gap:0.4rem;">
-                      <button type="button" class="cs-action-btn" id="qzYrAllOn">เลือกทุกปี</button>
-                      <button type="button" class="cs-action-btn" id="qzYrAllOff">ล้าง</button>
+                    <span style="font-size:0.82rem; font-weight:700; color:var(--qb-muted);">เลือกโรคที่ต้องการฝึก (${chosenDiseases.size} หัวข้อที่เลือก):</span>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button type="button" class="qz-btn-soft" id="qzDisAllOn">เลือกทั้งหมด</button>
+                      <button type="button" class="qz-btn-soft" id="qzDisAllOff">ล้าง</button>
+                    </div>
+                  </div>
+                  <div class="qz-pick-grid">
+                    ${diseases.map(d => `
+                      <label class="qz-pick-item">
+                        <input type="checkbox" data-pick-dis="${this.escapeHtml(d.id)}" ${chosenDiseases.has(d.id) ? 'checked' : ''}>
+                        <span>${this.escapeHtml(d.title)} (${d.questions.length})</span>
+                      </label>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+              ${srcScope === 'custom' ? `
+                <div style="margin-top: 0.85rem;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+                    <span style="font-size:0.82rem; font-weight:700;">ข้อสอบรายปี (เลือกได้หลายปี)</span>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button type="button" class="qz-btn-soft" id="qzYrAllOn">เลือกทุกปี</button>
+                      <button type="button" class="qz-btn-soft" id="qzYrAllOff">ล้าง</button>
                     </div>
                   </div>
                   <div class="qz-pick-grid">
@@ -2227,11 +2412,11 @@ ${this.escapeHtml(df.rawText)}
                       </label>
                     `).join('')}
                   </div>
-                  <div style="display:flex; justify-content:space-between; align-items:center; margin: 0.9rem 0 0.35rem;">
-                    <b style="font-size:0.84rem;">📖 ข้อสอบแยกบท (ติ๊กเลือกได้หลายบท)</b>
-                    <div style="display:flex; gap:0.4rem;">
-                      <button type="button" class="cs-action-btn" id="qzChAllOn">เลือกทุกบท</button>
-                      <button type="button" class="cs-action-btn" id="qzChAllOff">ล้าง</button>
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin: 0.85rem 0 0.35rem;">
+                    <span style="font-size:0.82rem; font-weight:700;">ข้อสอบแยกบท (เลือกได้หลายบท)</span>
+                    <div style="display:flex; gap:0.35rem;">
+                      <button type="button" class="qz-btn-soft" id="qzChAllOn">เลือกทุกบท</button>
+                      <button type="button" class="qz-btn-soft" id="qzChAllOff">ล้าง</button>
                     </div>
                   </div>
                   <div class="qz-pick-grid">
@@ -2247,104 +2432,92 @@ ${this.escapeHtml(df.rawText)}
             </div>
 
             <div class="qz-rand-section">
-              <div class="qz-rand-label"><span>2. กรองวัน & สถานะข้อสอบ</span></div>
-              <div style="display: flex; flex-wrap: wrap; gap: 0.85rem;">
+              <div class="qz-rand-label"><span>2. ตัวกรองวันและสถานะ</span></div>
+              <div style="display: flex; flex-wrap: wrap; gap: 1rem;">
                 <div>
-                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;">ช่วงวันของข้อสอบรายปี:</div>
-                  <div class="qz-cat-pills">
-                    <button type="button" class="cs-group-pill ${dayScope === 'all' ? 'active' : ''}" data-rday="all">ทั้งปี</button>
-                    <button type="button" class="cs-group-pill ${dayScope === 'day1' ? 'active' : ''}" data-rday="day1">เฉพาะวันแรก</button>
-                    <button type="button" class="cs-group-pill ${dayScope === 'day2' ? 'active' : ''}" data-rday="day2">เฉพาะวันที่สอง</button>
+                  <div style="font-size: 0.78rem; color: var(--qb-muted); margin-bottom: 0.35rem;">ช่วงวัน (สำหรับข้อสอบรายปี):</div>
+                  <div class="qz-seg-mini">
+                    <button type="button" class="qz-seg-mini-btn ${dayScope === 'all' ? 'active' : ''}" data-rday="all">ทั้งปี</button>
+                    <button type="button" class="qz-seg-mini-btn ${dayScope === 'day1' ? 'active' : ''}" data-rday="day1">วันแรก</button>
+                    <button type="button" class="qz-seg-mini-btn ${dayScope === 'day2' ? 'active' : ''}" data-rday="day2">วันที่สอง</button>
                   </div>
                 </div>
                 <div>
-                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.35rem;">สถานะข้อสอบ:</div>
-                  <div class="qz-cat-pills">
-                    <button type="button" class="cs-group-pill ${statusScope === 'all' ? 'active' : ''}" data-rstatus="all">ทุกข้อ</button>
-                    <button type="button" class="cs-group-pill ${statusScope === 'todo' ? 'active' : ''}" data-rstatus="todo">เฉพาะข้อที่ยังไม่ทำ</button>
-                    <button type="button" class="cs-group-pill ${statusScope === 'wrong' ? 'active' : ''}" data-rstatus="wrong">เฉพาะข้อที่เคยผิด</button>
+                  <div style="font-size: 0.78rem; color: var(--qb-muted); margin-bottom: 0.35rem;">สถานะข้อสอบ:</div>
+                  <div class="qz-seg-mini">
+                    <button type="button" class="qz-seg-mini-btn ${statusScope === 'all' ? 'active' : ''}" data-rstatus="all">ทุกข้อ</button>
+                    <button type="button" class="qz-seg-mini-btn ${statusScope === 'todo' ? 'active' : ''}" data-rstatus="todo">ยังไม่ทำ</button>
+                    <button type="button" class="qz-seg-mini-btn ${statusScope === 'wrong' ? 'active' : ''}" data-rstatus="wrong">เคยผิด</button>
                   </div>
                 </div>
               </div>
             </div>
 
             <div class="qz-rand-section">
-              <div class="qz-rand-label"><span>3. จำนวนข้อ & รูปแบบการสอบ</span></div>
-              <div class="qz-rand-count-row" style="margin-bottom: 0.85rem;">
+              <div class="qz-rand-label"><span>3. จำนวนข้อ รูปแบบตรวจ และนาฬิกา</span></div>
+              <div class="qz-rand-count-row" style="margin-bottom: 0.9rem;">
                 ${[10, 20, 30, 50, 100].map(n => `
-                  <button type="button" class="cs-group-pill ${reqCount === n ? 'active' : ''}" data-rcount="${n}">${n} ข้อ</button>
+                  <button type="button" class="qz-btn-soft ${reqCount === n ? 'active' : ''}" data-rcount="${n}">${n} ข้อ</button>
                 `).join('')}
-                <label style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; font-weight: 700;">
+                <label style="display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.83rem; font-weight: 700;">
                   กำหนดเอง:
                   <input type="number" id="qzCustomCountInput" class="qz-num-input" min="1" max="${Math.max(1, pool.length)}" value="${reqCount}">
                 </label>
               </div>
-              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.85rem;">
-                <div class="qz-cat-pills">
-                  <button type="button" class="cs-group-pill ${examMode === 'instant' ? 'active' : ''}" data-rmode="instant">⚡ ติ๊กปุ๊บเฉลยปั๊บ</button>
-                  <button type="button" class="cs-group-pill ${examMode === 'sim' ? 'active' : ''}" data-rmode="sim">📋 จำลองสอบจริง (ตรวจตอนจบ)</button>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.85rem;">
+                <div class="qz-seg-mini">
+                  <button type="button" class="qz-seg-mini-btn ${examMode === 'instant' ? 'active' : ''}" data-rmode="instant">ติ๊กปุ๊บเฉลยปั๊บ</button>
+                  <button type="button" class="qz-seg-mini-btn ${examMode === 'sim' ? 'active' : ''}" data-rmode="sim">จำลองสอบ (ตรวจตอนจบ)</button>
                 </div>
-                <label style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 700; cursor: pointer;">
-                  <input type="checkbox" id="qzTimerCheck" ${timerOn ? 'checked' : ''}>
-                  ⏱ จับเวลาระหว่างทำข้อสอบ
+                <label class="qz-switch-label">
+                  <button type="button" role="switch" id="qzTimerSwitch" class="qz-switch" aria-checked="${timerOn}"><span class="qz-switch-thumb"></span></button>
+                  <span>จับเวลาระหว่างทำข้อสอบ</span>
                 </label>
               </div>
             </div>
 
             <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-              <button type="button" id="qzStartRandomBtn" class="btn-dark-pill" style="padding: 0.78rem 1.65rem; font-size: 0.98rem;" ${pool.length === 0 ? 'disabled' : ''}>
-                🚀 เริ่มสุ่มข้อสอบ (${actualCount} ข้อ)
+              <button type="button" id="qzStartRandomBtn" class="qz-btn-solid" style="padding: 0.72rem 1.55rem; font-size: 0.95rem;" ${pool.length === 0 ? 'disabled' : ''}>
+                ${this.qzIcon('shuffle', 16)} เริ่มสุ่มข้อสอบ (${actualCount} ข้อ)
               </button>
               ${this.state.quizRandomSession ? `
-                <a href="#/quiz?random=1" class="btn btn-secondary" style="border-radius: 9999px; font-weight: 700;">
-                  ↩ ทำชุดสุ่มเดิมต่อ (${this.state.quizRandomSession.questions.length} ข้อ)
+                <a href="#/quiz?random=1" class="qz-btn-outline" style="padding: 0.68rem 1.15rem;">
+                  ทำชุดสุ่มเดิมต่อ (${this.state.quizRandomSession.questions.length} ข้อ)
                 </a>
               ` : ''}
             </div>
           </div>
         `;
 
-        tabBox.querySelectorAll('[data-scope]').forEach(btn => {
-          btn.addEventListener('click', () => { srcScope = btn.getAttribute('data-scope'); paintBuilder(); });
-        });
-        tabBox.querySelectorAll('[data-rday]').forEach(btn => {
-          btn.addEventListener('click', () => { dayScope = btn.getAttribute('data-rday'); paintBuilder(); });
-        });
-        tabBox.querySelectorAll('[data-rstatus]').forEach(btn => {
-          btn.addEventListener('click', () => { statusScope = btn.getAttribute('data-rstatus'); paintBuilder(); });
-        });
-        tabBox.querySelectorAll('[data-rcount]').forEach(btn => {
-          btn.addEventListener('click', () => { reqCount = parseInt(btn.getAttribute('data-rcount'), 10) || 20; paintBuilder(); });
-        });
-        document.getElementById('qzCustomCountInput')?.addEventListener('change', (e) => {
-          reqCount = Math.max(1, parseInt(e.target.value, 10) || 20);
+        tabBox.querySelectorAll('[data-scope]').forEach(btn => btn.addEventListener('click', () => { srcScope = btn.getAttribute('data-scope'); paintBuilder(); }));
+        tabBox.querySelectorAll('[data-rday]').forEach(btn => btn.addEventListener('click', () => { dayScope = btn.getAttribute('data-rday'); paintBuilder(); }));
+        tabBox.querySelectorAll('[data-rstatus]').forEach(btn => btn.addEventListener('click', () => { statusScope = btn.getAttribute('data-rstatus'); paintBuilder(); }));
+        tabBox.querySelectorAll('[data-rcount]').forEach(btn => btn.addEventListener('click', () => { reqCount = parseInt(btn.getAttribute('data-rcount'), 10) || 20; paintBuilder(); }));
+        document.getElementById('qzCustomCountInput')?.addEventListener('change', (e) => { reqCount = Math.max(1, parseInt(e.target.value, 10) || 20); paintBuilder(); });
+        tabBox.querySelectorAll('[data-rmode]').forEach(btn => btn.addEventListener('click', () => { examMode = btn.getAttribute('data-rmode'); this.state.quizExamMode = examMode; paintBuilder(); }));
+        document.getElementById('qzTimerSwitch')?.addEventListener('click', () => { timerOn = !timerOn; this.state.quizTimerOn = timerOn; paintBuilder(); });
+
+        tabBox.querySelectorAll('[data-pick-yr]').forEach(cb => cb.addEventListener('change', () => {
+          const id = cb.getAttribute('data-pick-yr');
+          if (cb.checked) chosenYears.add(id); else chosenYears.delete(id);
           paintBuilder();
-        });
-        tabBox.querySelectorAll('[data-rmode]').forEach(btn => {
-          btn.addEventListener('click', () => { examMode = btn.getAttribute('data-rmode'); this.state.quizExamMode = examMode; paintBuilder(); });
-        });
-        document.getElementById('qzTimerCheck')?.addEventListener('change', (e) => {
-          timerOn = !!e.target.checked;
-          this.state.quizTimerOn = timerOn;
-        });
-        tabBox.querySelectorAll('[data-pick-yr]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            const id = cb.getAttribute('data-pick-yr');
-            if (cb.checked) chosenYears.add(id); else chosenYears.delete(id);
-            paintBuilder();
-          });
-        });
-        tabBox.querySelectorAll('[data-pick-ch]').forEach(cb => {
-          cb.addEventListener('change', () => {
-            const id = cb.getAttribute('data-pick-ch');
-            if (cb.checked) chosenChapters.add(id); else chosenChapters.delete(id);
-            paintBuilder();
-          });
-        });
+        }));
+        tabBox.querySelectorAll('[data-pick-ch]').forEach(cb => cb.addEventListener('change', () => {
+          const id = cb.getAttribute('data-pick-ch');
+          if (cb.checked) chosenChapters.add(id); else chosenChapters.delete(id);
+          paintBuilder();
+        }));
+        tabBox.querySelectorAll('[data-pick-dis]').forEach(cb => cb.addEventListener('change', () => {
+          const id = cb.getAttribute('data-pick-dis');
+          if (cb.checked) chosenDiseases.add(id); else chosenDiseases.delete(id);
+          paintBuilder();
+        }));
         document.getElementById('qzYrAllOn')?.addEventListener('click', () => { chosenYears = new Set(years.map(x => x.id)); paintBuilder(); });
         document.getElementById('qzYrAllOff')?.addEventListener('click', () => { chosenYears.clear(); paintBuilder(); });
         document.getElementById('qzChAllOn')?.addEventListener('click', () => { chosenChapters = new Set(chapters.map(x => x.id)); paintBuilder(); });
         document.getElementById('qzChAllOff')?.addEventListener('click', () => { chosenChapters.clear(); paintBuilder(); });
+        document.getElementById('qzDisAllOn')?.addEventListener('click', () => { chosenDiseases = new Set(diseases.map(x => x.id)); paintBuilder(); });
+        document.getElementById('qzDisAllOff')?.addEventListener('click', () => { chosenDiseases.clear(); paintBuilder(); });
 
         document.getElementById('qzStartRandomBtn')?.addEventListener('click', () => {
           const finalPool = buildPool();
@@ -2381,6 +2554,14 @@ ${this.escapeHtml(df.rawText)}
       });
     });
 
+    c.querySelectorAll('[data-hub-order]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.state.quizShuffleOn = btn.getAttribute('data-hub-order') === 'shuffle';
+        this.saveQuizPrefs();
+        this.renderQuizHub(c);
+      });
+    });
+
     document.getElementById('qzResetAllBtn')?.addEventListener('click', () => {
       if (!window.confirm('ต้องการล้างประวัติการทำข้อสอบทั้งหมดใช่หรือไม่?')) return;
       this.state.quizAnswers = {};
@@ -2391,16 +2572,38 @@ ${this.escapeHtml(df.rawText)}
     renderActiveTab();
   },
 
-  renderQuizRunner(c, chapterId, qNumParam) {
+  renderQuizRunner(c, chapterId, qNumParam, subtopicFilter = '') {
     const chData = window.CC1_QUIZ_DATA || { chapters: [] };
     const ch = (chData.chapters || []).find(x => x.id === chapterId) || (chData.chapters || [])[0];
     if (!ch) { this.renderQuizHub(c); return; }
+    let qs = ch.questions || [];
+    let subTag = '';
+    if (subtopicFilter) {
+      const matched = qs.filter(q => (q.subtopic || '') === subtopicFilter);
+      if (matched.length) {
+        qs = matched;
+        subTag = ` · ${subtopicFilter}`;
+      }
+    }
     this.renderUnifiedRunner(c, {
-      setKey: `ch_${ch.id}`,
+      setKey: `ch_${ch.id}${subtopicFilter ? '_' + subtopicFilter : ''}`,
       backTab: 'chapter',
-      baseHash: `#/quiz?chapter=${ch.id}`,
-      title: `${ch.icon} บทที่ ${ch.chapterNum}. ${ch.title}`,
-      rawQuestions: ch.questions || [],
+      baseHash: `#/quiz?chapter=${ch.id}${subtopicFilter ? '&sub=' + encodeURIComponent(subtopicFilter) : ''}`,
+      title: `บทที่ ${ch.chapterNum}. ${ch.title}${subTag}`,
+      rawQuestions: qs,
+      qNumParam
+    });
+  },
+
+  renderDiseaseQuizRunner(c, diseaseId, qNumParam) {
+    const dis = this.getDiseaseDecks().find(d => d.id === diseaseId);
+    if (!dis) { this.renderQuizHub(c); return; }
+    this.renderUnifiedRunner(c, {
+      setKey: `dis_${dis.id}`,
+      backTab: 'chapter',
+      baseHash: `#/quiz?disease=${encodeURIComponent(dis.id)}`,
+      title: `แยกตามโรค: ${dis.title}`,
+      rawQuestions: dis.questions,
       qNumParam
     });
   },
@@ -2416,7 +2619,7 @@ ${this.escapeHtml(df.rawText)}
       setKey: `yr_${yr.id}_${dayFilter}`,
       backTab: 'year',
       baseHash: `#/quiz?year=${yr.id}&day=${dayFilter}`,
-      title: `🗓️ ${yr.title}${dayTag}`,
+      title: `${yr.title}${dayTag}`,
       rawQuestions: rawQs,
       qNumParam
     });
@@ -2434,7 +2637,7 @@ ${this.escapeHtml(df.rawText)}
       isRandomSession: true,
       backTab: 'random',
       baseHash: '#/quiz?random=1',
-      title: `🎲 ${sess.title}`,
+      title: sess.title,
       rawQuestions: sess.questions,
       qNumParam
     });
@@ -2508,7 +2711,6 @@ ${this.escapeHtml(df.rawText)}
       const prevQ = visIdx > 0 ? visibleQs[visIdx - 1] : null;
       const nextQ = (visIdx >= 0 && visIdx + 1 < visibleQs.length) ? visibleQs[visIdx + 1] : null;
 
-      // Provenance tags
       const ansTag = q.answerSource === 'no_answer'
         ? `<span class="qz-src-badge is-warn">เฉลยระบุ: ไม่มีคำตอบ</span>`
         : (q.answerSource === 'file'
@@ -2522,16 +2724,17 @@ ${this.escapeHtml(df.rawText)}
         <div class="qz-runner-wrap">
           <div class="qz-runner-topbar">
             <div class="qz-topbar-row">
-              <a href="#/quiz?tab=${cfg.backTab}" class="qz-back-btn">← กลับหน้าคลัง</a>
+              <a href="#/quiz?tab=${cfg.backTab}" class="qz-btn-outline" style="padding: 0.36rem 0.78rem; font-size: 0.82rem;">
+                ${this.qzIcon('chevLeft', 14)} กลับหน้าคลัง
+              </a>
               <div class="qz-runner-ch-name">${this.escapeHtml(cfg.title)}</div>
               <div class="qz-stats-strip">
-                ${this.state.quizTimerOn ? `<span class="qz-timer-pill">⏱ <span id="qzClockDisplay">${this.formatTimerClock(this.state.quizTimerSec)}</span></span>` : ''}
+                ${this.state.quizTimerOn ? `<span class="qz-timer-pill">${this.qzIcon('clock', 13)} <span id="qzClockDisplay">${this.formatTimerClock(this.state.quizTimerSec)}</span></span>` : ''}
                 ${(examMode === 'instant' || simSubmitted) ? `
-                  <span class="qz-stat-pill is-success">✓ ${st.correct}</span>
-                  <span class="qz-stat-pill is-danger">✕ ${st.wrong}</span>
-                ` : `<span class="qz-stat-pill">ตอบแล้ว ${st.done}/${st.total}</span>`}
-                <span class="qz-stat-pill">เหลือ ${st.total - st.done}</span>
-                <button type="button" class="cs-action-btn" id="qzToggleMapBtn">${showMap ? 'ซ่อนเลขข้อ' : `เลือกข้อ (${q.displayNo}/${st.total})`}</button>
+                  <span class="qz-stat-pill is-success">ถูก ${st.correct}</span>
+                  <span class="qz-stat-pill is-danger">ผิด ${st.wrong}</span>
+                ` : `<span class="qz-stat-pill">ตอบ ${st.done}/${st.total}</span>`}
+                <button type="button" class="qz-btn-soft" id="qzToggleMapBtn">${showMap ? 'ซ่อนเลขข้อ' : `ข้อ ${q.displayNo}/${st.total}`}</button>
               </div>
             </div>
             ${showMap ? `
@@ -2551,56 +2754,66 @@ ${this.escapeHtml(df.rawText)}
           </div>
 
           <div class="qz-filter-modes">
-            <div class="qz-cat-pills">
-              <button type="button" class="cs-group-pill ${filterMode === 'all' ? 'active' : ''}" data-qz-mode="all">ทั้งหมด (${st.total})</button>
-              <button type="button" class="cs-group-pill ${filterMode === 'todo' ? 'active' : ''}" data-qz-mode="todo">ยังไม่ทำ (${st.total - st.done})</button>
-              ${(examMode === 'instant' || simSubmitted) ? `<button type="button" class="cs-group-pill ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>` : ''}
+            <div class="qz-seg-mini">
+              <button type="button" class="qz-seg-mini-btn ${filterMode === 'all' ? 'active' : ''}" data-qz-mode="all">ทั้งหมด (${st.total})</button>
+              <button type="button" class="qz-seg-mini-btn ${filterMode === 'todo' ? 'active' : ''}" data-qz-mode="todo">ยังไม่ทำ (${st.total - st.done})</button>
+              ${(examMode === 'instant' || simSubmitted) ? `<button type="button" class="qz-seg-mini-btn ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>` : ''}
             </div>
             <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
               ${!cfg.isRandomSession ? `
-                <button type="button" class="cs-action-btn" id="qzToggleShuffleBtn" title="สลับโหมดสุ่มข้อกับเรียงตามหนังสือ">
-                  ${this.state.quizShuffleOn ? '🔀 กำลังสุ่มลำดับข้อ' : '🔢 เรียงตามหนังสือ'}
-                </button>
-                <button type="button" class="cs-action-btn" id="qzReshuffleBtn" title="สุ่มเรียงลำดับข้อรอบใหม่">🎲 สุ่มรอบใหม่</button>
+                <div class="qz-seg-mini">
+                  <button type="button" class="qz-seg-mini-btn ${!this.state.quizShuffleOn ? 'active' : ''}" data-run-order="orig" title="เรียงตามข้อ 1, 2, 3 ต้นฉบับ">
+                    ${this.qzIcon('list', 13)} ต้นฉบับ
+                  </button>
+                  <button type="button" class="qz-seg-mini-btn ${this.state.quizShuffleOn ? 'active' : ''}" data-run-order="shuffle" title="สุ่มลำดับข้อ">
+                    ${this.qzIcon('shuffle', 13)} สุ่มข้อ
+                  </button>
+                </div>
+                ${this.state.quizShuffleOn ? `<button type="button" class="qz-btn-soft" id="qzReshuffleBtn" title="สุ่มเรียงรอบใหม่">สุ่มใหม่</button>` : ''}
               ` : ''}
-              <button type="button" class="cs-action-btn" id="qzToggleSimModeBtn" title="สลับระหว่างติ๊กเฉลยทันทีกับจำลองสอบจริง">
-                ${examMode === 'sim' ? '📋 โหมดจำลองสอบ' : '⚡ เฉลยทันที'}
+              <button type="button" class="qz-btn-soft ${examMode === 'sim' ? 'active' : ''}" id="qzToggleSimModeBtn" title="สลับระหว่างติ๊กเฉลยทันทีกับจำลองสอบ">
+                ${examMode === 'sim' ? 'โหมดจำลองสอบ' : 'เฉลยทันที'}
               </button>
-              <button type="button" class="cs-action-btn" id="qzToggleTimerBtn">${this.state.quizTimerOn ? '⏸ ซ่อนเวลา' : '⏱ จับเวลา'}</button>
-              ${st.done > 0 ? `<button type="button" class="cs-action-btn" id="qzClearChRunnerBtn">ล้างคำตอบ</button>` : ''}
+              <button type="button" class="qz-btn-soft ${this.state.quizTimerOn ? 'active' : ''}" id="qzToggleTimerBtn">
+                ${this.qzIcon('clock', 13)} ${this.state.quizTimerOn ? 'ซ่อนเวลา' : 'จับเวลา'}
+              </button>
+              ${st.done > 0 ? `<button type="button" class="qz-btn-soft" id="qzClearChRunnerBtn">${this.qzIcon('reset', 13)} ล้าง</button>` : ''}
             </div>
           </div>
 
           ${(examMode === 'sim' && simSubmitted) ? `
             <div class="qz-sim-summary">
               <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
-                <div>
-                  <div style="font-size:0.86rem; font-weight:700; color:var(--text-muted);">📊 สรุปผลคะแนนโหมดจำลองสอบ</div>
-                  <div class="qz-sim-score-big">${st.correct} / ${st.total} ข้อ (${st.total ? Math.round((st.correct / st.total) * 100) : 0}%)</div>
-                  <div style="font-size:0.86rem; color:var(--text-secondary);">ทำไป ${st.done} ข้อ · ถูก ${st.correct} · ผิด ${st.wrong}${this.state.quizTimerSec > 0 ? ` · ใช้เวลา ${this.formatTimerClock(this.state.quizTimerSec)}` : ''}</div>
+                <div style="display:flex; align-items:center; gap:1rem;">
+                  ${this.qzRingHtml(st.correct, st.total, 62)}
+                  <div>
+                    <div style="font-size:0.84rem; font-weight:700; color:var(--qb-muted);">สรุปผลคะแนนโหมดจำลองสอบ</div>
+                    <div class="qz-sim-score-big">${st.correct} / ${st.total} ข้อ</div>
+                    <div style="font-size:0.84rem; color:var(--qb-muted);">ตอบ ${st.done} ข้อ · ถูก ${st.correct} · ผิด ${st.wrong}${this.state.quizTimerSec > 0 ? ` · เวลา ${this.formatTimerClock(this.state.quizTimerSec)}` : ''}</div>
+                  </div>
                 </div>
                 <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-                  <button type="button" class="cs-group-pill" data-qz-mode="wrong">ทบทวนเฉพาะข้อที่ผิด (${st.wrong})</button>
-                  <button type="button" class="btn-dark-pill" id="qzSimRestartBtn">ทำรอบใหม่อีกครั้ง</button>
+                  <button type="button" class="qz-btn-outline" data-qz-mode="wrong">ทบทวนข้อที่ผิด (${st.wrong})</button>
+                  <button type="button" class="qz-btn-solid" id="qzSimRestartBtn">ทำรอบใหม่อีกครั้ง</button>
                 </div>
               </div>
             </div>
           ` : (examMode === 'sim' && !simSubmitted ? `
-            <div class="card" style="padding: 0.72rem 1rem; margin-bottom: 0.85rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-              <span style="font-size:0.86rem; color:var(--text-secondary);">📋 <b>โหมดจำลองสอบจริง:</b> ตอบไว้แล้ว <b>${st.done}/${st.total}</b> ข้อ (ยังไม่เฉลยจนกว่าจะกดส่งคำตอบ)</span>
-              <button type="button" class="btn-lime-pill" id="qzSubmitSimBtn" style="font-size:0.84rem; padding:0.4rem 1rem;">✅ ส่งคำตอบ & ตรวจคะแนนทั้งชุด</button>
+            <div class="qz-panel" style="padding: 0.72rem 1rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+              <span style="font-size:0.85rem; color:var(--qb-muted);"><b>โหมดจำลองสอบ:</b> ตอบแล้ว <b>${st.done}/${st.total}</b> ข้อ (ยังไม่เฉลยจนกว่าจะกดส่งคำตอบ)</span>
+              <button type="button" class="qz-btn-solid" id="qzSubmitSimBtn">${this.qzIcon('check', 14)} ส่งคำตอบ &amp; ตรวจคะแนน</button>
             </div>
           ` : '')}
 
           ${visibleQs.length === 0 ? `
-            <div class="card qz-q-card" style="text-align: center; padding: 2.2rem 1.25rem;">
-              <p style="font-size: 1.05rem; font-weight: 700; margin: 0 0 0.75rem 0;">
-                ${filterMode === 'wrong' ? '🎉 ไม่มีข้อที่ตอบผิดแล้ว' : '✅ ทำครบทุกข้อแล้ว'}
+            <div class="qz-q-card" style="text-align: center; padding: 2.2rem 1.25rem;">
+              <p style="font-size: 1.02rem; font-weight: 700; margin: 0 0 0.85rem 0;">
+                ${filterMode === 'wrong' ? 'ไม่มีข้อที่ตอบผิดแล้ว' : 'ทำครบทุกข้อในชุดนี้แล้ว'}
               </p>
-              <button type="button" class="btn-dark-pill" data-qz-mode="all">แสดงข้อสอบทั้งหมด (${st.total} ข้อ)</button>
+              <button type="button" class="qz-btn-solid" data-qz-mode="all">แสดงข้อสอบทั้งหมด (${st.total} ข้อ)</button>
             </div>
           ` : `
-            <div class="card qz-q-card" id="qzActiveCard">
+            <div class="qz-q-card" id="qzActiveCard">
               <div class="qz-q-head">
                 <div style="display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
                   <span class="qz-q-badge">ข้อ ${q.displayNo} / ${st.total}</span>
@@ -2613,7 +2826,7 @@ ${this.escapeHtml(df.rawText)}
 
               ${(q.caseText || (q.caseImages && q.caseImages.length)) ? `
                 <div class="qz-case-box">
-                  <div class="qz-case-label">📋 กรณีศึกษา / ข้อมูลประกอบโจทย์</div>
+                  <div class="qz-case-label">กรณีศึกษา / ข้อมูลประกอบโจทย์</div>
                   ${q.caseText ? `<div>${this.escapeHtml(q.caseText)}</div>` : ''}
                   ${(q.caseImages && q.caseImages.length) ? `
                     <div class="qz-fig-wrap">
@@ -2658,12 +2871,12 @@ ${this.escapeHtml(df.rawText)}
                   <div class="qz-feedback-banner">
                     <span>
                       ${isNoAnswer
-                        ? `ⓘ เฉลยทางการระบุ: ไม่มีคำตอบ (ไม่หักคะแนน)${typeof q.bestGuess === 'number' ? ` · ใกล้เคียงสุด: ข้อ ${labels[q.bestGuess]}` : ''}`
+                        ? `เฉลยทางการระบุ: ไม่มีคำตอบ (ไม่หักคะแนน)${typeof q.bestGuess === 'number' ? ` · ใกล้เคียงสุด: ข้อ ${labels[q.bestGuess]}` : ''}`
                         : (isCorrect
-                          ? `✓ ถูกต้อง! (ข้อ ${this.escapeHtml(correctLabelsText)}${validIndices.length > 1 ? ' · ตอบได้หลายข้อ' : ''})`
-                          : `✕ ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabelsText)}`)}
+                          ? `ถูกต้อง (ข้อ ${this.escapeHtml(correctLabelsText)}${validIndices.length > 1 ? ' · ตอบได้หลายข้อ' : ''})`
+                          : `ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabelsText)}`)}
                     </span>
-                    ${examMode === 'instant' ? `<button type="button" class="cs-action-btn" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.25rem 0.65rem;">ทำใหม่ข้อนี้</button>` : ''}
+                    ${examMode === 'instant' ? `<button type="button" class="qz-btn-soft" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.24rem 0.62rem;">ทำใหม่ข้อนี้</button>` : ''}
                   </div>
                   <div class="qz-feedback-body">
                     ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabelsText}`)}
@@ -2678,14 +2891,14 @@ ${this.escapeHtml(df.rawText)}
               ` : ''}
 
               <div class="qz-q-footer">
-                <button type="button" class="btn btn-secondary" id="qzPrevBtn" style="border-radius: 9999px;" ${prevQ ? '' : 'disabled'}>
-                  ← ข้อก่อนหน้า
+                <button type="button" class="qz-btn-outline" id="qzPrevBtn" ${prevQ ? '' : 'disabled'}>
+                  ${this.qzIcon('chevLeft', 15)} ข้อก่อนหน้า
                 </button>
-                <span style="font-size: 0.8rem; color: var(--text-muted);">
-                  หน้า PDF ${q.pdfPage || '-'} · กดปุ่มตัวเลข 1-${(q.options || []).length} หรือ ←/→ ได้
+                <span style="font-size: 0.79rem; color: var(--qb-muted);">
+                  หน้า PDF ${q.pdfPage || '-'} · ปุ่ม 1–${(q.options || []).length} หรือลูกศร ← / →
                 </span>
-                <button type="button" class="btn-dark-pill" id="qzNextBtn" ${nextQ ? '' : 'disabled'}>
-                  ข้อถัดไป →
+                <button type="button" class="qz-btn-solid" id="qzNextBtn" ${nextQ ? '' : 'disabled'}>
+                  ข้อถัดไป ${this.qzIcon('chevRight', 15)}
                 </button>
               </div>
             </div>
@@ -2714,12 +2927,17 @@ ${this.escapeHtml(df.rawText)}
         });
       });
 
-      document.getElementById('qzToggleShuffleBtn')?.addEventListener('click', () => {
-        this.state.quizShuffleOn = !this.state.quizShuffleOn;
-        this.saveQuizPrefs();
-        qs = this.getOrderedQuestions(cfg.setKey, cfg.rawQuestions);
-        currentPos = 1;
-        renderBody();
+      c.querySelectorAll('[data-run-order]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const wantShuf = btn.getAttribute('data-run-order') === 'shuffle';
+          if (this.state.quizShuffleOn === wantShuf) return;
+          this.state.quizShuffleOn = wantShuf;
+          this.saveQuizPrefs();
+          qs = this.getOrderedQuestions(cfg.setKey, cfg.rawQuestions);
+          currentPos = 1;
+          window.history.replaceState(null, '', `${cfg.baseHash}&q=1`);
+          renderBody();
+        });
       });
 
       document.getElementById('qzReshuffleBtn')?.addEventListener('click', () => {
