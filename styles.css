@@ -3854,8 +3854,13 @@ button.qz-stat-pill.is-clickable:hover {
   .qz-seg-tab:nth-child(2n) {
     border-right: none;
   }
-  .qz-seg-tab:nth-last-child(-n+2) {
+  .qz-seg-tab:last-child,
+  .qz-seg-tab:nth-last-child(2):nth-child(odd) {
     border-bottom: none;
+  }
+  .qz-seg-tab:nth-child(odd):last-child {
+    grid-column: 1 / -1;
+    border-right: none;
   }
   .qz-select {
     width: 100%;
@@ -4017,6 +4022,100 @@ button.qz-stat-pill.is-clickable:hover {
   border-color: var(--qb-blue);
   background: var(--qb-blue-soft);
   color: var(--qb-blue);
+}
+
+.qz-year-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.qz-year-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--qb-border);
+  background: var(--qb-surface);
+  color: var(--qb-text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  transition: all 0.12s ease;
+}
+
+.qz-year-chip:hover,
+.qz-year-chip.active {
+  border-color: var(--qb-blue);
+  background: var(--qb-blue);
+  color: #FFFFFF;
+}
+
+.qz-year-chip-n {
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+.qz-year-chip:hover .qz-year-chip-n,
+.qz-year-chip.active .qz-year-chip-n {
+  opacity: 0.92;
+}
+
+.qz-group-link-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--qb-border);
+  background: var(--qb-blue-soft);
+  color: var(--qb-blue);
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.qz-group-link-pill:hover {
+  border-color: var(--qb-blue);
+  background: var(--qb-blue);
+  color: #FFFFFF;
+}
+
+.qz-grp-banner {
+  background: var(--qb-blue-soft);
+  border: 1.5px solid var(--qb-blue);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.qz-runner-years-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.65rem 0.9rem;
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  border-radius: 10px;
+  margin-bottom: 0.85rem;
+}
+
+.qz-runner-years-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--qb-muted);
+  margin-right: 0.25rem;
 }
 
 .qz-ch-actions {

@@ -13,7 +13,8 @@ const App = {
     quizShuffle: {},
     quizShuffleOn: true,
     quizHubTab: 'chapter',
-    quizChapterView: 'chapter', // 'chapter' | 'disease'
+    quizDiseaseSource: 'past', // 'past' | 'all' | 'chapter'
+    quizDiseaseView: 'disease', // 'disease' | 'group'
     quizWrongGroupBy: 'disease', // 'disease' | 'source'
     quizWrongScope: 'active', // 'active' | 'history'
     quizExamMode: 'instant', // 'instant' | 'sim'
@@ -471,13 +472,16 @@ ${this.escapeHtml(df.rawText)}
       const params = new URLSearchParams(query);
       const chapterId = params.get('chapter');
       const subParam = params.get('sub') || '';
+      const groupId = params.get('group');
       const diseaseId = params.get('disease');
+      const srcParam = params.get('src') || 'all';
+      const yrParam = params.get('yr') || '';
       const yearId = params.get('year');
       const dayParam = params.get('day') || 'all';
       const isRandom = params.get('random') === '1';
       const isRetryWrong = params.get('retrywrong') === '1';
       const tabParam = params.get('tab');
-      if (tabParam && ['chapter', 'year', 'wrong', 'random'].includes(tabParam)) {
+      if (tabParam && ['chapter', 'disease', 'year', 'wrong', 'random'].includes(tabParam)) {
         this.state.quizHubTab = tabParam;
       }
       const orderParam = params.get('order');
@@ -489,8 +493,10 @@ ${this.escapeHtml(df.rawText)}
         this.renderRetryWrongRunner(container, qNo);
       } else if (isRandom) {
         this.renderRandomQuizRunner(container, qNo);
+      } else if (groupId) {
+        this.renderGroupQuizRunner(container, groupId, srcParam, yrParam, qNo, qIdParam);
       } else if (diseaseId) {
-        this.renderDiseaseQuizRunner(container, diseaseId, qNo, qIdParam);
+        this.renderDiseaseQuizRunner(container, diseaseId, srcParam, yrParam, qNo, qIdParam);
       } else if (yearId) {
         this.renderPastExamRunner(container, yearId, dayParam, qNo, qIdParam);
       } else if (chapterId) {
@@ -1914,11 +1920,21 @@ ${this.escapeHtml(df.rawText)}
     `;
   },
 
-  getDiseaseDecks() {
+  isClinicalTopicGroup(groupId) {
+    return [
+      'cvs', 'infection', 'psychiatry', 'immunology', 'renal', 'gi',
+      'bone_joint', 'gynecology', 'neurology', 'oncology', 'endocrine',
+      'pulmonary', 'hematology', 'dermatology', 'eent'
+    ].includes(groupId || '');
+  },
+
+  getTaggedDecks(sourceFilter = 'past') {
     const chData = window.CC1_QUIZ_DATA || { chapters: [] };
     const peData = window.CC1_PAST_EXAM_DATA || { chapters: [] };
-    const map = new Map();
-    const pushQ = (q, srcTitle) => {
+    const disMap = new Map();
+    const grpMap = new Map();
+
+    const registerQ = (q, meta) => {
       const tag = q.topicTag || (q.dataRef && q.dataRef.topicId ? {
         id: q.dataRef.topicId,
         title: q.dataRef.topicTitle || q.dataRef.topicId,
@@ -1926,24 +1942,121 @@ ${this.escapeHtml(df.rawText)}
         groupName: q.dataRef.groupName || ''
       } : null);
       if (!tag || !tag.id) return;
-      if (!map.has(tag.id)) {
-        map.set(tag.id, {
+      const gId = tag.groupId || tag.groupName || 'other';
+      const gTitle = tag.groupName || gId;
+      const isClin = this.isClinicalTopicGroup(gId);
+      const qCopy = {
+        ...q,
+        _sourceLabel: meta.label,
+        _sourceType: meta.type,
+        _sourceYear: meta.year || '',
+        _sortKey: meta.sortKey
+      };
+
+      if (!disMap.has(tag.id)) {
+        disMap.set(tag.id, {
           id: tag.id,
           title: tag.title || tag.id,
-          groupId: tag.groupId || '',
-          groupName: tag.groupName || '',
-          questions: []
+          groupId: gId,
+          groupName: gTitle,
+          isClinical: isClin,
+          questions: [],
+          pastCount: 0,
+          chapterCount: 0,
+          yearCounts: {},
+          years: []
         });
       }
-      map.get(tag.id).questions.push({ ...q, _sourceLabel: srcTitle });
+      const dEntry = disMap.get(tag.id);
+      dEntry.questions.push(qCopy);
+      if (meta.type === 'past') {
+        dEntry.pastCount++;
+        if (meta.year) dEntry.yearCounts[meta.year] = (dEntry.yearCounts[meta.year] || 0) + 1;
+      } else {
+        dEntry.chapterCount++;
+      }
+
+      if (!grpMap.has(gId)) {
+        grpMap.set(gId, {
+          id: gId,
+          title: gTitle,
+          isClinical: isClin,
+          questions: [],
+          pastCount: 0,
+          chapterCount: 0,
+          yearCounts: {},
+          years: [],
+          diseaseIds: new Set(),
+          diseases: []
+        });
+      }
+      const gEntry = grpMap.get(gId);
+      gEntry.questions.push(qCopy);
+      gEntry.diseaseIds.add(tag.id);
+      if (meta.type === 'past') {
+        gEntry.pastCount++;
+        if (meta.year) gEntry.yearCounts[meta.year] = (gEntry.yearCounts[meta.year] || 0) + 1;
+      } else {
+        gEntry.chapterCount++;
+      }
     };
-    (chData.chapters || []).forEach(ch => {
-      (ch.questions || []).forEach(q => pushQ(q, `บท ${ch.chapterNum}. ${ch.title}`));
+
+    if (sourceFilter !== 'chapter') {
+      (peData.chapters || []).forEach(yr => {
+        const yNum = parseInt(yr.year, 10) || 0;
+        (yr.questions || []).forEach(q => {
+          const dNum = q.day === 'day2' ? 2 : 1;
+          const sortKey = yNum * 100000 + dNum * 10000 + (parseInt(q.origNo, 10) || 0);
+          registerQ(q, {
+            type: 'past',
+            year: String(yr.year || ''),
+            label: `${yr.title} · ${q.day === 'day2' ? 'วันที่สอง' : 'วันแรก'} ข้อ ${q.origNo}`,
+            sortKey
+          });
+        });
+      });
+    }
+
+    if (sourceFilter !== 'past') {
+      (chData.chapters || []).forEach(ch => {
+        const chNum = parseInt(ch.chapterNum, 10) || 0;
+        (ch.questions || []).forEach(q => {
+          registerQ(q, {
+            type: 'chapter',
+            year: '',
+            label: `บท ${ch.chapterNum}. ${ch.title}`,
+            sortKey: 90000000 + chNum * 1000 + (parseInt(q.origNo, 10) || 0)
+          });
+        });
+      });
+    }
+
+    const finalize = (item) => {
+      item.questions.sort((a, b) => (a._sortKey || 0) - (b._sortKey || 0));
+      item.years = Object.keys(item.yearCounts).sort();
+      return item;
+    };
+
+    const diseases = Array.from(disMap.values()).map(finalize)
+      .sort((a, b) => b.questions.length - a.questions.length);
+
+    const groups = Array.from(grpMap.values()).map(g => {
+      finalize(g);
+      g.diseases = Array.from(g.diseaseIds)
+        .map(did => disMap.get(did))
+        .filter(Boolean)
+        .sort((a, b) => b.questions.length - a.questions.length);
+      return g;
+    }).sort((a, b) => {
+      if (a.isClinical !== b.isClinical) return a.isClinical ? -1 : 1;
+      return b.questions.length - a.questions.length;
     });
-    (peData.chapters || []).forEach(yr => {
-      (yr.questions || []).forEach(q => pushQ(q, `${yr.title} · ${q.day === 'day2' ? 'วันที่สอง' : 'วันแรก'} ข้อ ${q.origNo}`));
-    });
-    return Array.from(map.values()).sort((a, b) => b.questions.length - a.questions.length);
+
+    return { diseases, groups };
+  },
+
+  getDiseaseDecks(sourceFilter = 'all') {
+    return this.getTaggedDecks(sourceFilter).diseases;
   },
 
   shuffleArray(arr) {
@@ -2124,7 +2237,7 @@ ${this.escapeHtml(df.rawText)}
     const chapters = chData.chapters || [];
     const peData = window.CC1_PAST_EXAM_DATA || { chapters: [], totalQuestions: 0 };
     const years = peData.chapters || [];
-    const diseases = this.getDiseaseDecks();
+    const pastTagged = this.getTaggedDecks('past');
     const answers = this.state.quizAnswers || {};
     const activeTab = this.state.quizHubTab || 'chapter';
 
@@ -2144,7 +2257,7 @@ ${this.escapeHtml(df.rawText)}
           <div class="qz-header-top">
             <div>
               <h1 class="qz-title">คลังข้อสอบ PLE-CC1</h1>
-              <p class="qz-sub">แยกบท (${chapters.length} บท · ${allChapterQs.length} ข้อ) · แยกตามโรค (${diseases.length} หัวข้อ) · ย้อนหลังรายปี (${allYearQs.length} ข้อ)</p>
+              <p class="qz-sub">แยกบท (${chapters.length} บท · ${allChapterQs.length} ข้อ) · แยกตามโรค/กลุ่ม (${pastTagged.groups.length} กลุ่ม · ${pastTagged.diseases.length} หัวข้อ) · ย้อนหลังรายปี (${allYearQs.length} ข้อ)</p>
             </div>
             <div class="qz-overview-metrics">
               ${this.qzRingHtml(stAll.done, stAll.total, 54)}
@@ -2160,8 +2273,12 @@ ${this.escapeHtml(df.rawText)}
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
             <div class="qz-seg-tabs" role="tablist" aria-label="ประเภทคลังข้อสอบ">
               <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'chapter' ? 'active' : ''}" data-qz-tab="chapter">
-                <span>แยกบท &amp; แยกโรค</span>
+                <span>ข้อสอบแยกบท</span>
                 <span class="qz-seg-count">${allChapterQs.length}</span>
+              </button>
+              <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'disease' ? 'active' : ''}" data-qz-tab="disease">
+                <span>แยกตามโรค / กลุ่ม</span>
+                <span class="qz-seg-count">${pastTagged.diseases.length}</span>
               </button>
               <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'year' ? 'active' : ''}" data-qz-tab="year">
                 <span>ข้อสอบรายปี (2556–2567)</span>
@@ -2190,7 +2307,7 @@ ${this.escapeHtml(df.rawText)}
               </div>
             </div>
             <span style="font-size:0.8rem; color:var(--qb-muted);">
-              ${this.state.quizShuffleOn ? 'เข้าทำแต่ละครั้งระบบจะสุ่มเรียงลำดับข้อให้' : 'เข้าทำจะเรียงข้อที่ 1, 2, 3... ตามหนังสือ/ข้อสอบต้นฉบับ'}
+              ${this.state.quizShuffleOn ? 'เข้าทำแต่ละครั้งระบบจะสุ่มเรียงลำดับข้อให้' : 'เข้าทำจะเรียงข้อที่ 1, 2, 3... ตามหนังสือ/ปี พ.ศ. ต้นฉบับ'}
             </span>
           </div>
         </div>
@@ -2202,32 +2319,19 @@ ${this.escapeHtml(df.rawText)}
     const tabBox = document.getElementById('qzTabContent');
 
     const renderChapterTab = () => {
-      const chapterView = this.state.quizChapterView || 'chapter';
-      // Unique groups for Disease dropdown
-      const diseaseGroups = Array.from(new Set(diseases.map(d => d.groupName).filter(Boolean)));
       tabBox.innerHTML = `
         <div class="qz-panel" style="padding: 1rem 1.25rem;">
           <div class="qz-filter-bar">
-            <div class="qz-seg-mini" role="group" aria-label="มุมมองแยกบทหรือแยกโรค">
-              <button type="button" class="qz-seg-mini-btn ${chapterView === 'chapter' ? 'active' : ''}" data-ch-view="chapter">แยกตาม 20 บท</button>
-              <button type="button" class="qz-seg-mini-btn ${chapterView === 'disease' ? 'active' : ''}" data-ch-view="disease">แยกตามโรค (${diseases.length})</button>
-            </div>
             <div class="qz-search-box">
-              <input type="search" id="qzChSearchInput" class="qz-search-input" placeholder="${chapterView === 'disease' ? 'ค้นหาชื่อโรคหรือหัวข้อ เช่น Hypertension, Asthma, PK...' : 'ค้นหาชื่อบทหรือโรคในบท...'}" autocomplete="off">
+              <input type="search" id="qzChSearchInput" class="qz-search-input" placeholder="ค้นหาชื่อบทหรือโรคในบท..." autocomplete="off">
               <span class="qz-search-btn-sq">${this.qzIcon('search', 16)}</span>
             </div>
-            ${chapterView === 'chapter' ? `
-              <div class="qz-cat-pills" id="qzCatPills">
-                <button type="button" class="qz-btn-soft active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
-                <button type="button" class="qz-btn-soft" data-qz-cat="clinical">กลุ่มโรค (${clinicalCount})</button>
-                <button type="button" class="qz-btn-soft" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
-              </div>
-            ` : `
-              <select id="qzDiseaseGroupSelect" class="qz-select" aria-label="กรองตามหมวดโรค">
-                <option value="all">ทุกหมวด (${diseases.length} หัวข้อ)</option>
-                ${diseaseGroups.map(gn => `<option value="${this.escapeHtml(gn)}">${this.escapeHtml(gn)}</option>`).join('')}
-              </select>
-            `}
+            <div class="qz-cat-pills" id="qzCatPills">
+              <button type="button" class="qz-btn-soft active" data-qz-cat="all">ทั้งหมด (${chapters.length})</button>
+              <button type="button" class="qz-btn-soft" data-qz-cat="clinical">กลุ่มโรค (${clinicalCount})</button>
+              <button type="button" class="qz-btn-soft" data-qz-cat="pharm">เภสัชภัณฑ์·วิเคราะห์·กฎหมาย (${pharmCount})</button>
+              <button type="button" class="qz-btn-outline" id="qzGoDiseaseTabQuick" style="padding:0.32rem 0.72rem; font-size:0.8rem;">ดูข้อสอบเก่าแยกตามโรค &rarr;</button>
+            </div>
           </div>
         </div>
 
@@ -2236,9 +2340,8 @@ ${this.escapeHtml(df.rawText)}
         </div>
 
         <div class="qz-chapter-grid" id="qzChapterGrid">
-          ${chapterView === 'chapter' ? chapters.map(ch => {
+          ${chapters.map(ch => {
             const st = this.getChapterQuizStats(ch);
-            // Distinct subtopics inside this chapter
             const subMap = new Map();
             (ch.questions || []).forEach(q => {
               const s = q.subtopic;
@@ -2285,55 +2388,27 @@ ${this.escapeHtml(df.rawText)}
                 </div>
               </article>
             `;
-          }).join('') : diseases.map(dis => {
-            const st = this.getQuizSetStats(dis.questions);
-            const searchBlob = `${dis.title} ${dis.id} ${dis.groupName}`.toLowerCase();
-            return `
-              <article class="qz-ch-card" data-qz-grp="${this.escapeHtml(dis.groupName || '')}" data-qz-search="${this.escapeHtml(searchBlob)}">
-                <div class="qz-ch-head">
-                  <div style="min-width: 0; flex: 1;">
-                    ${dis.groupName ? `<div class="qz-ch-meta" style="margin-bottom:0.25rem; color:var(--qb-blue); font-weight:700;">${this.escapeHtml(dis.groupName)}</div>` : ''}
-                    <h2 class="qz-ch-title">${this.escapeHtml(dis.title)}</h2>
-                    <div class="qz-ch-meta">
-                      <span>คลังรวม ${st.total} ข้อ</span>
-                      ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done}</span>` : ''}
-                    </div>
-                  </div>
-                  ${this.qzRingHtml(st.done, st.total, 46)}
-                </div>
-                <div class="qz-ch-actions">
-                  <a href="#/quiz?disease=${encodeURIComponent(dis.id)}" class="qz-btn-solid" style="flex:1;">
-                    ${st.done === 0 ? `ฝึกหัวข้อนี้ (${st.total} ข้อ)` : `ทำต่อ (${st.done}/${st.total})`}
-                  </a>
-                </div>
-              </article>
-            `;
           }).join('')}
         </div>
       `;
 
-      tabBox.querySelectorAll('[data-ch-view]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          this.state.quizChapterView = btn.getAttribute('data-ch-view') || 'chapter';
-          renderChapterTab();
-        });
+      document.getElementById('qzGoDiseaseTabQuick')?.addEventListener('click', () => {
+        this.state.quizHubTab = 'disease';
+        c.querySelectorAll('[data-qz-tab]').forEach(b => b.classList.toggle('active', b.getAttribute('data-qz-tab') === 'disease'));
+        renderActiveTab();
       });
 
       const searchInput = document.getElementById('qzChSearchInput');
       const catPills = document.getElementById('qzCatPills');
-      const grpSelect = document.getElementById('qzDiseaseGroupSelect');
       const cards = Array.from(tabBox.querySelectorAll('.qz-ch-card'));
       const emptyEl = document.getElementById('qzEmptyHub');
       let activeCat = 'all';
-      let activeGrp = 'all';
 
       const applyHubFilter = () => {
         const q = (searchInput?.value || '').trim().toLowerCase();
         let shown = 0;
         cards.forEach(card => {
-          const catOk = chapterView === 'chapter'
-            ? (activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat)
-            : (activeGrp === 'all' || card.getAttribute('data-qz-grp') === activeGrp);
+          const catOk = activeCat === 'all' || card.getAttribute('data-qz-cat') === activeCat;
           const txtOk = !q || (card.getAttribute('data-qz-search') || '').includes(q);
           const vis = catOk && txtOk;
           card.classList.toggle('is-hidden', !vis);
@@ -2343,7 +2418,6 @@ ${this.escapeHtml(df.rawText)}
       };
 
       searchInput?.addEventListener('input', applyHubFilter);
-      grpSelect?.addEventListener('change', (e) => { activeGrp = e.target.value; applyHubFilter(); });
       catPills?.querySelectorAll('[data-qz-cat]').forEach(btn => {
         btn.addEventListener('click', () => {
           activeCat = btn.getAttribute('data-qz-cat') || 'all';
@@ -2361,6 +2435,254 @@ ${this.escapeHtml(df.rawText)}
           this.renderQuizHub(c);
         });
       });
+    };
+
+    const renderDiseaseTab = () => {
+      let srcFilter = this.state.quizDiseaseSource || 'past';
+      let viewMode = this.state.quizDiseaseView || 'disease';
+      let domainCat = 'all'; // 'all' | 'clinical' | 'pharm'
+      let grpFilterId = 'all';
+      let searchQuery = '';
+
+      const buildYearChipsHtml = (yearsArr, yearCounts, baseHref) => {
+        if (!yearsArr || !yearsArr.length) return '';
+        return `
+          <div class="qz-year-chips">
+            ${yearsArr.map(y => `
+              <a href="${baseHref}&yr=${encodeURIComponent(y)}" class="qz-year-chip" title="ทำเฉพาะปี พ.ศ. ${y}">
+                <span>${y}</span>
+                <span class="qz-year-chip-n">${yearCounts[y] || 0}</span>
+              </a>
+            `).join('')}
+          </div>
+        `;
+      };
+
+      const paintDiseaseHub = () => {
+        const tagged = this.getTaggedDecks(srcFilter);
+        const groups = tagged.groups;
+        const diseases = tagged.diseases;
+        const qNorm = searchQuery.trim().toLowerCase();
+
+        const domainMatches = (isClin) => domainCat === 'all' || (domainCat === 'clinical' ? isClin : !isClin);
+        const filteredGroups = groups.filter(g => {
+          if (!domainMatches(g.isClinical)) return false;
+          if (!qNorm) return true;
+          const blob = `${g.title} ${g.id} ${g.years.join(' ')} ${g.diseases.map(d => d.title).join(' ')}`.toLowerCase();
+          return blob.includes(qNorm);
+        });
+        const filteredDiseases = diseases.filter(d => {
+          if (!domainMatches(d.isClinical)) return false;
+          if (grpFilterId !== 'all' && d.groupId !== grpFilterId) return false;
+          if (!qNorm) return true;
+          const blob = `${d.title} ${d.id} ${d.groupName} ${d.years.join(' ')}`.toLowerCase();
+          return blob.includes(qNorm);
+        });
+
+        const selectedGrpObj = (viewMode === 'disease' && grpFilterId !== 'all')
+          ? groups.find(g => g.id === grpFilterId)
+          : null;
+        const clinicalGrpCount = groups.filter(g => g.isClinical).length;
+        const pharmGrpCount = groups.length - clinicalGrpCount;
+
+        tabBox.innerHTML = `
+          <div class="qz-panel" style="padding: 1rem 1.25rem; display:flex; flex-direction:column; gap:0.75rem;">
+            <div class="qz-wrong-controls">
+              <div class="qz-seg-mini" role="group" aria-label="แหล่งข้อสอบ">
+                <button type="button" class="qz-seg-mini-btn ${srcFilter === 'past' ? 'active' : ''}" data-dis-src="past">เฉพาะข้อสอบเก่า 2556–2567 (${allYearQs.length})</button>
+                <button type="button" class="qz-seg-mini-btn ${srcFilter === 'all' ? 'active' : ''}" data-dis-src="all">รวมทั้งหมด · เก่า+แยกบท (${stAll.total})</button>
+                <button type="button" class="qz-seg-mini-btn ${srcFilter === 'chapter' ? 'active' : ''}" data-dis-src="chapter">เฉพาะแยกบท (${allChapterQs.length})</button>
+              </div>
+              <div class="qz-seg-mini" role="group" aria-label="มุมมองรายโรคหรือรายกลุ่ม">
+                <button type="button" class="qz-seg-mini-btn ${viewMode === 'disease' ? 'active' : ''}" data-dis-view="disease">แยกรายโรค / หัวข้อ (${diseases.length})</button>
+                <button type="button" class="qz-seg-mini-btn ${viewMode === 'group' ? 'active' : ''}" data-dis-view="group">แยกรายกลุ่ม / ระบบ (${groups.length})</button>
+              </div>
+            </div>
+
+            <div class="qz-filter-bar">
+              <div class="qz-search-box">
+                <input type="search" id="qzDisSearchInput" class="qz-search-input" value="${this.escapeHtml(searchQuery)}" placeholder="ค้นหาโรค, กลุ่มโรค หรือปี พ.ศ. เช่น Hypertension, เบาหวาน, CVS, 2566..." autocomplete="off">
+                <span class="qz-search-btn-sq">${this.qzIcon('search', 16)}</span>
+              </div>
+              ${viewMode === 'disease' ? `
+                <select id="qzDisGroupSelect" class="qz-select" aria-label="กรองตามกลุ่มโรค">
+                  <option value="all" ${grpFilterId === 'all' ? 'selected' : ''}>ทุกกลุ่ม / ทุกระบบ (${groups.length} กลุ่ม)</option>
+                  ${groups.filter(g => domainMatches(g.isClinical)).map(g => `
+                    <option value="${this.escapeHtml(g.id)}" ${grpFilterId === g.id ? 'selected' : ''}>${this.escapeHtml(g.title)} (${g.questions.length} ข้อ)</option>
+                  `).join('')}
+                </select>
+              ` : ''}
+              <div class="qz-cat-pills">
+                <button type="button" class="qz-btn-soft ${domainCat === 'all' ? 'active' : ''}" data-dis-dom="all">ทั้งหมด</button>
+                <button type="button" class="qz-btn-soft ${domainCat === 'clinical' ? 'active' : ''}" data-dis-dom="clinical">กลุ่มโรคทางคลินิก (${clinicalGrpCount})</button>
+                <button type="button" class="qz-btn-soft ${domainCat === 'pharm' ? 'active' : ''}" data-dis-dom="pharm">เภสัชศาสตร์·เคมี·กฎหมาย (${pharmGrpCount})</button>
+              </div>
+            </div>
+          </div>
+
+          ${selectedGrpObj ? (() => {
+            const gSt = this.getQuizSetStats(selectedGrpObj.questions);
+            const gHref = `#/quiz?group=${encodeURIComponent(selectedGrpObj.id)}&src=${srcFilter}`;
+            return `
+              <div class="qz-grp-banner">
+                <div style="min-width:0; flex:1;">
+                  <div style="font-size:0.78rem; font-weight:700; color:var(--qb-blue); margin-bottom:0.2rem;">
+                    ฝึกทั้งกลุ่มรวมทุกหัวข้อย่อย (${selectedGrpObj.diseases.length} หัวข้อ${selectedGrpObj.years.length ? ` · ออก ${selectedGrpObj.years.length} ปี: ${selectedGrpObj.years[0]}–${selectedGrpObj.years[selectedGrpObj.years.length - 1]}` : ''})
+                  </div>
+                  <h2 style="margin:0; font-size:1.08rem; font-weight:800; color:var(--qb-text);">${this.escapeHtml(selectedGrpObj.title)}</h2>
+                  <div style="font-size:0.83rem; color:var(--qb-muted); margin-top:0.2rem;">
+                    รวม ${gSt.total} ข้อ · ทำแล้ว ${gSt.done} · ถูก ${gSt.correct}
+                  </div>
+                </div>
+                <a href="${gHref}" class="qz-btn-solid">
+                  ${gSt.done === 0 ? `ฝึกทั้งกลุ่ม (${gSt.total} ข้อ)` : `ทำต่อทั้งกลุ่ม (${gSt.done}/${gSt.total})`}
+                </a>
+              </div>
+            `;
+          })() : ''}
+
+          ${((viewMode === 'group' ? filteredGroups.length : filteredDiseases.length) === 0) ? `
+            <div class="qz-panel" style="text-align: center; padding: 1.75rem; color: var(--qb-muted);">
+              ไม่พบโรคหรือกลุ่มที่ตรงกับตัวกรอง
+            </div>
+          ` : `
+            <div class="qz-chapter-grid" id="qzDiseaseGrid">
+              ${viewMode === 'group' ? filteredGroups.map(grp => {
+                const st = this.getQuizSetStats(grp.questions);
+                const gHref = `#/quiz?group=${encodeURIComponent(grp.id)}&src=${srcFilter}`;
+                const yrSpan = grp.years.length
+                  ? `ข้อสอบเก่า ${grp.years.length} ปี (${grp.years[0]}–${grp.years[grp.years.length - 1]})`
+                  : 'คลังแยกบท';
+                return `
+                  <article class="qz-ch-card">
+                    <div class="qz-ch-head">
+                      <div style="min-width:0; flex:1;">
+                        <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.28rem;">
+                          <span class="qz-src-badge ${grp.isClinical ? 'is-file' : ''}">${grp.isClinical ? 'กลุ่มโรคทางคลินิก' : 'เภสัชศาสตร์ / กฎหมาย'}</span>
+                          <span class="qz-ch-meta">${grp.diseases.length} หัวข้อ · ${st.total} ข้อ</span>
+                        </div>
+                        <h2 class="qz-ch-title">${this.escapeHtml(grp.title)}</h2>
+                        <div class="qz-ch-meta">
+                          <span>${yrSpan}</span>
+                          ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done}</span>` : ''}
+                        </div>
+                      </div>
+                      ${this.qzRingHtml(st.done, st.total, 46)}
+                    </div>
+
+                    ${grp.diseases.length ? `
+                      <div class="qz-disease-chips">
+                        ${grp.diseases.map(d => `
+                          <a href="#/quiz?disease=${encodeURIComponent(d.id)}&src=${srcFilter}" class="qz-disease-chip" title="ฝึกเฉพาะ ${this.escapeHtml(d.title)}">
+                            <span>${this.escapeHtml(d.title)}</span>
+                            <span style="opacity:0.65;">${d.questions.length}</span>
+                          </a>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+
+                    ${buildYearChipsHtml(grp.years, grp.yearCounts, gHref)}
+
+                    <div class="qz-ch-actions">
+                      <a href="${gHref}" class="qz-btn-solid" style="flex:1;">
+                        ${st.done === 0 ? `ฝึกทั้งกลุ่ม (${st.total} ข้อ)` : `ทำต่อทั้งกลุ่ม (${st.done}/${st.total})`}
+                      </a>
+                      ${st.done > 0 ? `<button type="button" class="qz-btn-soft" data-dis-reset-grp="${this.escapeHtml(grp.id)}">รีเซ็ต</button>` : ''}
+                    </div>
+                  </article>
+                `;
+              }).join('') : filteredDiseases.map(dis => {
+                const st = this.getQuizSetStats(dis.questions);
+                const dHref = `#/quiz?disease=${encodeURIComponent(dis.id)}&src=${srcFilter}`;
+                const srcInfoParts = [];
+                if (dis.pastCount > 0) srcInfoParts.push(`ข้อสอบเก่า ${dis.pastCount} ข้อ (${dis.years.length} ปี)`);
+                if (dis.chapterCount > 0) srcInfoParts.push(`แยกบท ${dis.chapterCount} ข้อ`);
+                return `
+                  <article class="qz-ch-card">
+                    <div class="qz-ch-head">
+                      <div style="min-width:0; flex:1;">
+                        <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.25rem;">
+                          <button type="button" class="qz-group-link-pill" data-pick-dis-grp="${this.escapeHtml(dis.groupId)}" title="คลิกเพื่อกรองทั้งกลุ่ม ${this.escapeHtml(dis.groupName)}">
+                            ${this.escapeHtml(dis.groupName)}
+                          </button>
+                        </div>
+                        <h2 class="qz-ch-title">${this.escapeHtml(dis.title)}</h2>
+                        <div class="qz-ch-meta">
+                          <span>${srcInfoParts.join(' · ') || `${st.total} ข้อ`}</span>
+                          ${st.done > 0 ? `<span>· ถูก ${st.correct}/${st.done}</span>` : ''}
+                        </div>
+                      </div>
+                      ${this.qzRingHtml(st.done, st.total, 46)}
+                    </div>
+
+                    ${buildYearChipsHtml(dis.years, dis.yearCounts, dHref)}
+
+                    <div class="qz-ch-actions">
+                      <a href="${dHref}" class="qz-btn-solid" style="flex:1;">
+                        ${st.done === 0 ? `ฝึกทุกปี (${st.total} ข้อ)` : `ทำต่อ (${st.done}/${st.total})`}
+                      </a>
+                      ${st.done > 0 ? `<button type="button" class="qz-btn-soft" data-dis-reset-id="${this.escapeHtml(dis.id)}">รีเซ็ต</button>` : ''}
+                    </div>
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          `}
+        `;
+
+        tabBox.querySelectorAll('[data-dis-src]').forEach(btn => btn.addEventListener('click', () => {
+          srcFilter = btn.getAttribute('data-dis-src') || 'past';
+          this.state.quizDiseaseSource = srcFilter;
+          grpFilterId = 'all';
+          paintDiseaseHub();
+        }));
+        tabBox.querySelectorAll('[data-dis-view]').forEach(btn => btn.addEventListener('click', () => {
+          viewMode = btn.getAttribute('data-dis-view') || 'disease';
+          this.state.quizDiseaseView = viewMode;
+          paintDiseaseHub();
+        }));
+        tabBox.querySelectorAll('[data-dis-dom]').forEach(btn => btn.addEventListener('click', () => {
+          domainCat = btn.getAttribute('data-dis-dom') || 'all';
+          grpFilterId = 'all';
+          paintDiseaseHub();
+        }));
+        document.getElementById('qzDisGroupSelect')?.addEventListener('change', (e) => {
+          grpFilterId = e.target.value;
+          paintDiseaseHub();
+        });
+        tabBox.querySelectorAll('[data-pick-dis-grp]').forEach(btn => btn.addEventListener('click', () => {
+          grpFilterId = btn.getAttribute('data-pick-dis-grp') || 'all';
+          paintDiseaseHub();
+        }));
+        const sIn = document.getElementById('qzDisSearchInput');
+        sIn?.addEventListener('input', (e) => {
+          searchQuery = e.target.value;
+          paintDiseaseHub();
+          const f = document.getElementById('qzDisSearchInput');
+          if (f) {
+            f.focus();
+            f.setSelectionRange(searchQuery.length, searchQuery.length);
+          }
+        });
+        tabBox.querySelectorAll('[data-dis-reset-id]').forEach(btn => btn.addEventListener('click', () => {
+          const did = btn.getAttribute('data-dis-reset-id');
+          const d = diseases.find(x => x.id === did);
+          if (!d) return;
+          d.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
+          this.saveQuizAnswers();
+          this.renderQuizHub(c);
+        }));
+        tabBox.querySelectorAll('[data-dis-reset-grp]').forEach(btn => btn.addEventListener('click', () => {
+          const gid = btn.getAttribute('data-dis-reset-grp');
+          const g = groups.find(x => x.id === gid);
+          if (!g) return;
+          g.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
+          this.saveQuizAnswers();
+          this.renderQuizHub(c);
+        }));
+      };
+
+      paintDiseaseHub();
     };
 
     const renderYearTab = () => {
@@ -2997,7 +3319,8 @@ ${this.escapeHtml(df.rawText)}
     };
 
     const renderActiveTab = () => {
-      if (this.state.quizHubTab === 'year') renderYearTab();
+      if (this.state.quizHubTab === 'disease') renderDiseaseTab();
+      else if (this.state.quizHubTab === 'year') renderYearTab();
       else if (this.state.quizHubTab === 'wrong') renderWrongTab();
       else if (this.state.quizHubTab === 'random') renderRandomTab();
       else renderChapterTab();
@@ -3062,18 +3385,40 @@ ${this.escapeHtml(df.rawText)}
     });
   },
 
-  renderDiseaseQuizRunner(c, diseaseId, qNumParam, qIdParam = '') {
-    const dis = this.getDiseaseDecks().find(d => d.id === diseaseId);
-    if (!dis) { this.renderQuizHub(c); return; }
+  launchTaggedDeckRunner(c, kind, deck, srcParam, yrParam, qNumParam, qIdParam = '') {
+    if (!deck) { this.renderQuizHub(c); return; }
+    const src = ['past', 'all', 'chapter'].includes(srcParam) ? srcParam : 'all';
+    const yr = yrParam && deck.years && deck.years.includes(yrParam) ? yrParam : '';
+    const qs = yr ? deck.questions.filter(q => q._sourceYear === yr) : deck.questions;
+    const prefix = kind === 'group' ? 'กลุ่ม' : 'โรค/หัวข้อ';
+    const yearTag = yr ? ` · ปี ${yr}` : (src === 'past' && deck.years.length > 1 ? ` · รวม ${deck.years.length} ปี` : '');
+    const yearBaseHash = `#/quiz?${kind}=${encodeURIComponent(deck.id)}&src=${src}`;
     this.renderUnifiedRunner(c, {
-      setKey: `dis_${dis.id}`,
-      backTab: 'chapter',
-      baseHash: `#/quiz?disease=${encodeURIComponent(dis.id)}`,
-      title: `แยกตามโรค: ${dis.title}`,
-      rawQuestions: dis.questions,
+      setKey: `${kind}_${deck.id}_${src}${yr ? '_' + yr : ''}`,
+      backTab: 'disease',
+      baseHash: `${yearBaseHash}${yr ? '&yr=' + encodeURIComponent(yr) : ''}`,
+      yearBaseHash,
+      availableYears: deck.years || [],
+      yearCounts: deck.yearCounts || {},
+      activeYear: yr,
+      totalAcrossYears: deck.questions.length,
+      title: `${prefix}: ${deck.title}${yearTag}`,
+      rawQuestions: qs,
       qNumParam,
       qIdParam
     });
+  },
+
+  renderDiseaseQuizRunner(c, diseaseId, srcParam = 'all', yrParam = '', qNumParam = 0, qIdParam = '') {
+    const src = ['past', 'all', 'chapter'].includes(srcParam) ? srcParam : 'all';
+    const dis = this.getTaggedDecks(src).diseases.find(d => d.id === diseaseId);
+    this.launchTaggedDeckRunner(c, 'disease', dis, src, yrParam, qNumParam, qIdParam);
+  },
+
+  renderGroupQuizRunner(c, groupId, srcParam = 'past', yrParam = '', qNumParam = 0, qIdParam = '') {
+    const src = ['past', 'all', 'chapter'].includes(srcParam) ? srcParam : 'past';
+    const grp = this.getTaggedDecks(src).groups.find(g => g.id === groupId);
+    this.launchTaggedDeckRunner(c, 'group', grp, src, yrParam, qNumParam, qIdParam);
   },
 
   renderPastExamRunner(c, yearId, dayParam, qNumParam, qIdParam = '') {
@@ -3285,6 +3630,20 @@ ${this.escapeHtml(df.rawText)}
               ${st.done > 0 ? `<button type="button" class="qz-btn-soft" id="qzClearChRunnerBtn">${this.qzIcon('reset', 13)} ล้าง</button>` : ''}
             </div>
           </div>
+
+          ${(cfg.availableYears && cfg.availableYears.length > 1) ? `
+            <div class="qz-runner-years-bar">
+              <span class="qz-runner-years-label">กรองตามปี พ.ศ.:</span>
+              <a href="${cfg.yearBaseHash}" class="qz-year-chip ${!cfg.activeYear ? 'active' : ''}">
+                ทุกปี <span class="qz-year-chip-n">${cfg.totalAcrossYears || st.total}</span>
+              </a>
+              ${cfg.availableYears.map(y => `
+                <a href="${cfg.yearBaseHash}&yr=${encodeURIComponent(y)}" class="qz-year-chip ${cfg.activeYear === y ? 'active' : ''}">
+                  ${y} <span class="qz-year-chip-n">${(cfg.yearCounts && cfg.yearCounts[y]) || 0}</span>
+                </a>
+              `).join('')}
+            </div>
+          ` : ''}
 
           ${(examMode === 'sim' && simSubmitted) ? `
             <div class="qz-sim-summary">
