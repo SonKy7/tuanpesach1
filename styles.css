@@ -3545,6 +3545,17 @@ abbr.cc1-abbr:focus {
   color: var(--qb-bad);
 }
 
+button.qz-stat-pill.is-clickable {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.14s ease, filter 0.14s ease;
+}
+
+button.qz-stat-pill.is-clickable:hover {
+  transform: translateY(-1px);
+  filter: brightness(0.97);
+}
+
 /* Joined Segmented Tabs (Reference Image: Tab 1 | Tab 2 | Tab 3) */
 .qz-seg-tabs {
   display: inline-flex;
@@ -3828,7 +3839,7 @@ abbr.cc1-abbr:focus {
 @media (max-width: 640px) {
   .qz-seg-tabs {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
   .qz-seg-tab {
@@ -3836,11 +3847,15 @@ abbr.cc1-abbr:focus {
     text-align: center;
     white-space: normal;
     line-height: 1.25;
-    padding: 0.48rem 0.4rem;
-    font-size: 0.78rem;
+    padding: 0.52rem 0.45rem;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--qb-border);
   }
-  .qz-seg-tab .qz-seg-count {
-    display: none;
+  .qz-seg-tab:nth-child(2n) {
+    border-right: none;
+  }
+  .qz-seg-tab:nth-last-child(-n+2) {
+    border-bottom: none;
   }
   .qz-select {
     width: 100%;
@@ -4533,4 +4548,246 @@ abbr.cc1-abbr:focus {
   outline: 2.5px solid #3B66F5;
   box-shadow: 0 0 0 4px rgba(59, 102, 245, 0.16);
   transition: box-shadow 0.4s ease;
+}
+
+/* ==========================================================================
+   Wrong Questions Review & Retry Category Bank (#/quiz?tab=wrong)
+   ========================================================================== */
+.qz-seg-tab.has-wrong-alert:not(.active) .qz-seg-count.is-alert {
+  background: var(--qb-bad-bg);
+  color: var(--qb-bad);
+  border: 1px solid var(--qb-bad-border);
+  padding: 0.08rem 0.45rem;
+  border-radius: 9999px;
+  opacity: 1;
+}
+
+.qz-wrong-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+.qz-wrong-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.qz-wrong-group {
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.qz-wrong-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.95rem 1.2rem;
+  background: var(--qb-subtle);
+  border-bottom: 1px solid var(--qb-border);
+}
+
+.qz-wrong-group.is-collapsed .qz-wrong-group-head {
+  border-bottom: none;
+}
+
+.qz-wrong-group-info {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.qz-wrong-group-title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 800;
+  color: var(--qb-text);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.qz-wrong-group-sub {
+  font-size: 0.8rem;
+  color: var(--qb-muted);
+  margin-top: 0.2rem;
+}
+
+.qz-wrong-group-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.qz-wrong-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.qz-wrong-group.is-collapsed .qz-wrong-list {
+  display: none;
+}
+
+.qz-wrong-item {
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--qb-border);
+}
+
+.qz-wrong-item:last-child {
+  border-bottom: none;
+}
+
+.qz-wrong-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.qz-wrong-stem {
+  font-size: 0.97rem;
+  font-weight: 600;
+  line-height: 1.62;
+  color: var(--qb-text);
+  margin-bottom: 0.75rem;
+  white-space: pre-line;
+  max-width: 74ch;
+}
+
+.qz-wrong-case {
+  background: var(--qb-subtle);
+  border: 1px solid var(--qb-border);
+  border-left: 3px solid var(--qb-blue);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--qb-muted);
+  margin-bottom: 0.65rem;
+  white-space: pre-line;
+}
+
+.qz-wrong-diff {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
+.qz-diff-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.68rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid var(--qb-border);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--qb-text);
+}
+
+.qz-diff-row.is-wrong {
+  background: var(--qb-bad-bg);
+  border-color: var(--qb-bad-border);
+}
+
+.qz-diff-row.is-right {
+  background: var(--qb-ok-bg);
+  border-color: var(--qb-ok-border);
+}
+
+.qz-diff-tag {
+  flex-shrink: 0;
+  padding: 0.14rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #FFFFFF;
+}
+
+.qz-diff-row.is-wrong .qz-diff-tag {
+  background: var(--qb-bad);
+}
+
+.qz-diff-row.is-right .qz-diff-tag {
+  background: var(--qb-ok);
+}
+
+.qz-diff-opt {
+  min-width: 0;
+  flex: 1;
+  font-weight: 600;
+}
+
+.qz-wrong-exp {
+  padding: 0.78rem 0.95rem;
+  border-radius: 10px;
+  border: 1px solid var(--qb-border);
+  background: var(--qb-subtle);
+  font-size: 0.87rem;
+  line-height: 1.6;
+  color: var(--qb-text);
+  white-space: normal;
+}
+
+.qz-wrong-exp-body {
+  white-space: pre-line;
+}
+
+.qz-wrong-exp-label {
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--qb-blue);
+  margin-bottom: 0.28rem;
+  white-space: normal;
+}
+
+.qz-wrong-item-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.qz-wrong-empty {
+  text-align: center;
+  padding: 2.6rem 1.5rem;
+}
+
+.qz-wrong-empty-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--qb-blue-soft);
+  color: var(--qb-blue);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .qz-wrong-item {
+    padding: 0.95rem 1rem;
+  }
+  .qz-wrong-group-head {
+    padding: 0.85rem 1rem;
+  }
+  .qz-wrong-diff {
+    grid-template-columns: 1fr;
+  }
 }

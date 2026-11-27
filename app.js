@@ -8,15 +8,19 @@ const App = {
     bookmarkedTopics: {},
     expandedHomeGroups: {},
     quizAnswers: {},
+    quizWrongHistory: {},
     quizFilter: 'all',
     quizShuffle: {},
     quizShuffleOn: true,
     quizHubTab: 'chapter',
     quizChapterView: 'chapter', // 'chapter' | 'disease'
+    quizWrongGroupBy: 'disease', // 'disease' | 'source'
+    quizWrongScope: 'active', // 'active' | 'history'
     quizExamMode: 'instant', // 'instant' | 'sim'
     quizTimerOn: false,
     quizTimerSec: 0,
     quizRandomSession: null,
+    quizRetrySession: null,
     fontScale: 1,
     inPageFind: {
       isOpen: false,
@@ -142,6 +146,7 @@ const App = {
       this.state.readTopics = JSON.parse(localStorage.getItem('cc1.readTopics') || '{}');
       this.state.bookmarkedTopics = JSON.parse(localStorage.getItem('cc1.bookmarkedTopics') || '{}');
       this.state.quizAnswers = JSON.parse(localStorage.getItem('cc1.quizAnswers') || '{}');
+      this.state.quizWrongHistory = JSON.parse(localStorage.getItem('cc1.quizWrongHistory') || '{}');
       this.state.quizShuffle = JSON.parse(localStorage.getItem('cc1.quizShuffle') || '{}');
       const savedShufOn = localStorage.getItem('cc1.quizShuffleOn');
       if (savedShufOn !== null) this.state.quizShuffleOn = savedShufOn === 'true';
@@ -154,6 +159,7 @@ const App = {
       this.state.readTopics = {};
       this.state.bookmarkedTopics = {};
       this.state.quizAnswers = {};
+      this.state.quizWrongHistory = {};
       this.state.quizShuffle = {};
     }
   },
@@ -162,6 +168,37 @@ const App = {
     try {
       localStorage.setItem('cc1.quizAnswers', JSON.stringify(this.state.quizAnswers || {}));
     } catch (e) {}
+  },
+
+  saveQuizWrongHistory() {
+    try {
+      localStorage.setItem('cc1.quizWrongHistory', JSON.stringify(this.state.quizWrongHistory || {}));
+    } catch (e) {}
+  },
+
+  recordQuizAttempt(q, pickedIdx) {
+    if (!q || !q.id || typeof pickedIdx !== 'number') return;
+    if (!this.state.quizWrongHistory) this.state.quizWrongHistory = {};
+    const ok = this.isQuizChoiceCorrect(q, pickedIdx);
+    const prev = this.state.quizWrongHistory[q.id];
+    if (!ok) {
+      this.state.quizWrongHistory[q.id] = {
+        wrongIdx: pickedIdx,
+        lastPickedIdx: pickedIdx,
+        count: (prev?.count || 0) + 1,
+        resolved: false,
+        updatedAt: Date.now()
+      };
+      this.saveQuizWrongHistory();
+    } else if (prev) {
+      this.state.quizWrongHistory[q.id] = {
+        ...prev,
+        lastPickedIdx: pickedIdx,
+        resolved: true,
+        updatedAt: Date.now()
+      };
+      this.saveQuizWrongHistory();
+    }
   },
 
   saveQuizPrefs() {
@@ -438,22 +475,26 @@ ${this.escapeHtml(df.rawText)}
       const yearId = params.get('year');
       const dayParam = params.get('day') || 'all';
       const isRandom = params.get('random') === '1';
+      const isRetryWrong = params.get('retrywrong') === '1';
       const tabParam = params.get('tab');
-      if (tabParam && ['chapter', 'year', 'random'].includes(tabParam)) {
+      if (tabParam && ['chapter', 'year', 'wrong', 'random'].includes(tabParam)) {
         this.state.quizHubTab = tabParam;
       }
       const orderParam = params.get('order');
       if (orderParam === 'orig') { this.state.quizShuffleOn = false; this.saveQuizPrefs(); }
       else if (orderParam === 'shuffle') { this.state.quizShuffleOn = true; this.saveQuizPrefs(); }
       const qNo = parseInt(params.get('q') || '0', 10);
-      if (isRandom) {
+      const qIdParam = params.get('qid') || '';
+      if (isRetryWrong) {
+        this.renderRetryWrongRunner(container, qNo);
+      } else if (isRandom) {
         this.renderRandomQuizRunner(container, qNo);
       } else if (diseaseId) {
-        this.renderDiseaseQuizRunner(container, diseaseId, qNo);
+        this.renderDiseaseQuizRunner(container, diseaseId, qNo, qIdParam);
       } else if (yearId) {
-        this.renderPastExamRunner(container, yearId, dayParam, qNo);
+        this.renderPastExamRunner(container, yearId, dayParam, qNo, qIdParam);
       } else if (chapterId) {
-        this.renderQuizRunner(container, chapterId, qNo, subParam);
+        this.renderQuizRunner(container, chapterId, qNo, subParam, qIdParam);
       } else {
         this.renderQuizHub(container);
       }
@@ -1964,6 +2005,120 @@ ${this.escapeHtml(df.rawText)}
     `;
   },
 
+  getAllQuestionsIndexed() {
+    const chData = window.CC1_QUIZ_DATA || { chapters: [] };
+    const peData = window.CC1_PAST_EXAM_DATA || { chapters: [] };
+    const list = [];
+    const seen = new Set();
+    const resolveDisease = (q) => q.topicTag || (q.dataRef && q.dataRef.topicId ? {
+      id: q.dataRef.topicId,
+      title: q.dataRef.topicTitle || q.dataRef.topicId,
+      groupId: q.dataRef.groupId || '',
+      groupName: q.dataRef.groupName || ''
+    } : null);
+
+    (chData.chapters || []).forEach(ch => {
+      const srcKey = `ch_${ch.id}`;
+      const srcTitle = `บท ${ch.chapterNum}. ${ch.title}`;
+      (ch.questions || []).forEach(q => {
+        if (seen.has(q.id)) return;
+        seen.add(q.id);
+        const dis = resolveDisease(q);
+        list.push({
+          ...q,
+          _sourceType: 'chapter',
+          _sourceKey: srcKey,
+          _sourceTitle: srcTitle,
+          _sourceLabel: q._sourceLabel || srcTitle,
+          _sourceHref: `#/quiz?chapter=${ch.id}&order=orig&qid=${encodeURIComponent(q.id)}`,
+          _diseaseKey: dis ? dis.id : `src_${srcKey}`,
+          _diseaseTitle: dis ? dis.title : (q.subtopic || srcTitle),
+          _diseaseGroup: dis?.groupName || (ch.category === 'clinical' ? 'กลุ่มโรค' : 'เภสัชศาสตร์·วิเคราะห์·กฎหมาย')
+        });
+      });
+    });
+
+    (peData.chapters || []).forEach(yr => {
+      const srcKey = `yr_${yr.id}`;
+      const srcTitle = yr.title || yr.id;
+      (yr.questions || []).forEach(q => {
+        if (seen.has(q.id)) return;
+        seen.add(q.id);
+        const dis = resolveDisease(q);
+        const dayTag = q.day === 'day2' ? 'วันที่สอง' : 'วันแรก';
+        list.push({
+          ...q,
+          _sourceType: 'year',
+          _sourceKey: srcKey,
+          _sourceTitle: srcTitle,
+          _sourceLabel: q._sourceLabel || `${srcTitle} · ${dayTag} ข้อ ${q.origNo || '-'}`,
+          _sourceHref: `#/quiz?year=${yr.id}&day=${q.day || 'all'}&order=orig&qid=${encodeURIComponent(q.id)}`,
+          _diseaseKey: dis ? dis.id : `src_${srcKey}`,
+          _diseaseTitle: dis ? dis.title : srcTitle,
+          _diseaseGroup: dis?.groupName || 'ข้อสอบย้อนหลังรายปี'
+        });
+      });
+    });
+    return list;
+  },
+
+  getWrongEntries(scope = 'active') {
+    const ans = this.state.quizAnswers || {};
+    const hist = this.state.quizWrongHistory || {};
+    const allQs = this.getAllQuestionsIndexed();
+    const out = [];
+    allQs.forEach(q => {
+      const currPicked = typeof ans[q.id] === 'number' ? ans[q.id] : null;
+      const isCurrWrong = currPicked !== null && !this.isQuizChoiceCorrect(q, currPicked);
+      const h = hist[q.id];
+      if (scope === 'active') {
+        if (!isCurrWrong) return;
+        out.push({
+          ...q,
+          _wrongPickedIdx: currPicked,
+          _isResolved: false,
+          _wrongCount: Math.max(1, h?.count || 1),
+          _updatedAt: h?.updatedAt || 0
+        });
+      } else {
+        if (!isCurrWrong && !h) return;
+        const pickedForReview = isCurrWrong ? currPicked : (typeof h?.wrongIdx === 'number' ? h.wrongIdx : currPicked);
+        out.push({
+          ...q,
+          _wrongPickedIdx: pickedForReview,
+          _isResolved: !isCurrWrong,
+          _wrongCount: Math.max(1, h?.count || 1),
+          _updatedAt: h?.updatedAt || 0
+        });
+      }
+    });
+    return out;
+  },
+
+  launchRetryWrongSession(questions, title = 'ทำใหม่เฉพาะข้อที่ผิด') {
+    if (!questions || !questions.length) return;
+    const prevWrongMap = {};
+    const ans = this.state.quizAnswers || {};
+    const hist = this.state.quizWrongHistory || {};
+    questions.forEach(q => {
+      if (typeof q._wrongPickedIdx === 'number') prevWrongMap[q.id] = q._wrongPickedIdx;
+      else if (typeof ans[q.id] === 'number' && !this.isQuizChoiceCorrect(q, ans[q.id])) prevWrongMap[q.id] = ans[q.id];
+      else if (typeof hist[q.id]?.wrongIdx === 'number') prevWrongMap[q.id] = hist[q.id].wrongIdx;
+    });
+    const baseList = this.state.quizShuffleOn ? this.shuffleArray(questions) : [...questions];
+    const ordered = baseList.map((q, idx) => ({ ...q, displayNo: idx + 1 }));
+    this.state.quizTimerSec = 0;
+    this.state.quizRetrySession = {
+      title,
+      questions: ordered,
+      retryAnswers: {},
+      simAnswers: {},
+      simSubmitted: false,
+      prevWrongMap
+    };
+    window.location.hash = '#/quiz?retrywrong=1&q=1';
+  },
+
   renderQuizHub(c) {
     const chData = window.CC1_QUIZ_DATA || { chapters: [], totalQuestions: 0 };
     const chapters = chData.chapters || [];
@@ -1976,6 +2131,7 @@ ${this.escapeHtml(df.rawText)}
     const allChapterQs = chapters.flatMap(ch => ch.questions || []);
     const allYearQs = years.flatMap(y => y.questions || []);
     const stAll = this.getQuizSetStats([...allChapterQs, ...allYearQs]);
+    const wrongActiveCount = stAll.wrong;
 
     const clinicalCount = chapters.filter(ch => ch.category === 'clinical').length;
     const pharmCount = chapters.filter(ch => ch.category === 'pharm').length;
@@ -1995,7 +2151,7 @@ ${this.escapeHtml(df.rawText)}
               <div class="qz-stats-strip">
                 <span class="qz-stat-pill">ทำแล้ว ${stAll.done}/${stAll.total}</span>
                 <span class="qz-stat-pill is-success">ถูก ${stAll.correct}</span>
-                <span class="qz-stat-pill is-danger">ผิด ${stAll.wrong}</span>
+                <button type="button" class="qz-stat-pill is-danger is-clickable" id="qzJumpWrongTabBtn" title="คลิกเพื่อดูและทำใหม่เฉพาะข้อที่ผิด">ผิด ${wrongActiveCount}</button>
                 ${stAll.done > 0 ? `<button type="button" class="qz-btn-soft" id="qzResetAllBtn">${this.qzIcon('reset', 13)} ล้างทั้งหมด</button>` : ''}
               </div>
             </div>
@@ -2010,6 +2166,10 @@ ${this.escapeHtml(df.rawText)}
               <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'year' ? 'active' : ''}" data-qz-tab="year">
                 <span>ข้อสอบรายปี (2556–2567)</span>
                 <span class="qz-seg-count">${allYearQs.length}</span>
+              </button>
+              <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'wrong' ? 'active' : ''} ${wrongActiveCount > 0 ? 'has-wrong-alert' : ''}" data-qz-tab="wrong">
+                <span>ข้อที่เคยผิด</span>
+                <span class="qz-seg-count ${wrongActiveCount > 0 ? 'is-alert' : ''}">${wrongActiveCount}</span>
               </button>
               <button type="button" role="tab" class="qz-seg-tab ${activeTab === 'random' ? 'active' : ''}" data-qz-tab="random">
                 <span>สุ่มข้อสอบ (Custom)</span>
@@ -2540,8 +2700,305 @@ ${this.escapeHtml(df.rawText)}
       paintBuilder();
     };
 
+    const renderWrongTab = () => {
+      let scope = this.state.quizWrongScope || 'active';
+      let groupBy = this.state.quizWrongGroupBy || 'disease';
+      let catFilter = 'all';
+      let queryStr = '';
+      const collapsedGroups = new Set();
+
+      const paintWrongView = () => {
+        const activeList = this.getWrongEntries('active');
+        const historyList = this.getWrongEntries('history');
+        const baseList = scope === 'history' ? historyList : activeList;
+        const resolvedCount = historyList.filter(x => x._isResolved).length;
+
+        const buildGroups = (items) => {
+          const map = new Map();
+          items.forEach(item => {
+            const gKey = groupBy === 'disease'
+              ? (item._diseaseKey || item._sourceKey)
+              : (item._sourceKey || item._diseaseKey);
+            const gTitle = groupBy === 'disease'
+              ? (item._diseaseTitle || item._sourceTitle)
+              : (item._sourceTitle || item._diseaseTitle);
+            const gSub = groupBy === 'disease'
+              ? (item._diseaseGroup || '')
+              : (item._sourceType === 'year' ? 'ข้อสอบย้อนหลังรายปี' : 'ข้อสอบแยกบท');
+            if (!map.has(gKey)) {
+              map.set(gKey, { key: gKey, title: gTitle, sub: gSub, items: [] });
+            }
+            map.get(gKey).items.push(item);
+          });
+          return Array.from(map.values()).sort((a, b) => b.items.length - a.items.length);
+        };
+
+        const allGroups = buildGroups(baseList);
+        const qNorm = queryStr.trim().toLowerCase();
+        const filteredItems = baseList.filter(item => {
+          const gKey = groupBy === 'disease'
+            ? (item._diseaseKey || item._sourceKey)
+            : (item._sourceKey || item._diseaseKey);
+          if (catFilter !== 'all' && gKey !== catFilter) return false;
+          if (qNorm) {
+            const blob = `${item.stem || ''} ${item.caseText || ''} ${(item.options || []).join(' ')} ${item._diseaseTitle || ''} ${item._sourceLabel || ''} ${item.subtopic || ''}`.toLowerCase();
+            if (!blob.includes(qNorm)) return false;
+          }
+          return true;
+        });
+        const shownGroups = buildGroups(filteredItems);
+
+        tabBox.innerHTML = `
+          <div class="qz-panel" style="padding: 1.1rem 1.25rem;">
+            <div class="qz-wrong-hero">
+              <div>
+                <h2 class="qz-ch-title" style="font-size: 1.08rem; margin-bottom: 0.25rem;">หมวดหมู่ข้อสอบที่เคยตอบผิด</h2>
+                <div class="qz-stats-strip">
+                  <span class="qz-stat-pill is-danger">ยังผิดอยู่ ${activeList.length} ข้อ</span>
+                  <span class="qz-stat-pill is-success">แก้ถูกแล้ว ${resolvedCount} ข้อ</span>
+                  <span class="qz-stat-pill">ทั้งหมดในประวัติ ${historyList.length} ข้อ</span>
+                </div>
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:0.45rem; align-items:center;">
+                <button type="button" id="qzStartRetryAllBtn" class="qz-btn-solid" ${filteredItems.length === 0 ? 'disabled' : ''}>
+                  ${this.qzIcon('reset', 15)} ลองทำใหม่เฉพาะข้อที่ผิด (${filteredItems.length} ข้อ)
+                </button>
+                ${resolvedCount > 0 ? `<button type="button" id="qzClearResolvedBtn" class="qz-btn-soft">ล้างข้อที่แก้ถูกแล้ว</button>` : ''}
+              </div>
+            </div>
+
+            <div class="qz-filter-bar">
+              <div class="qz-seg-mini" role="group" aria-label="ขอบเขตข้อที่ผิด">
+                <button type="button" class="qz-seg-mini-btn ${scope === 'active' ? 'active' : ''}" data-wrong-scope="active">ยังผิดอยู่ (${activeList.length})</button>
+                <button type="button" class="qz-seg-mini-btn ${scope === 'history' ? 'active' : ''}" data-wrong-scope="history">ประวัติเคยผิด (${historyList.length})</button>
+              </div>
+              <div class="qz-seg-mini" role="group" aria-label="จัดกลุ่มข้อที่ผิด">
+                <button type="button" class="qz-seg-mini-btn ${groupBy === 'disease' ? 'active' : ''}" data-wrong-grp="disease">จัดกลุ่มตามโรค / หัวข้อ</button>
+                <button type="button" class="qz-seg-mini-btn ${groupBy === 'source' ? 'active' : ''}" data-wrong-grp="source">จัดกลุ่มตามบท / ปี</button>
+              </div>
+              <select id="qzWrongCatFilter" class="qz-select" aria-label="กรองตามหมวดหมู่ข้อที่ผิด">
+                <option value="all">ทุกหมวด (${allGroups.length} หมวด · ${baseList.length} ข้อ)</option>
+                ${allGroups.map(g => `<option value="${this.escapeHtml(g.key)}" ${catFilter === g.key ? 'selected' : ''}>${this.escapeHtml(g.title)} (${g.items.length})</option>`).join('')}
+              </select>
+              <div class="qz-search-box" style="min-width: 210px;">
+                <input type="search" id="qzWrongSearchInput" class="qz-search-input" value="${this.escapeHtml(queryStr)}" placeholder="ค้นหาโจทย์ ชื่อยา หรือโรคที่ผิด..." autocomplete="off">
+                <span class="qz-search-btn-sq">${this.qzIcon('search', 16)}</span>
+              </div>
+            </div>
+          </div>
+
+          ${baseList.length === 0 ? `
+            <div class="qz-panel qz-wrong-empty">
+              <div class="qz-wrong-empty-icon">${this.qzIcon('check', 24)}</div>
+              <h3 class="qz-ch-title" style="margin-bottom: 0.35rem;">
+                ${scope === 'active'
+                  ? (stAll.done > 0 ? 'เยี่ยมมาก — ตอนนี้ไม่มีข้อที่ค้างตอบผิดแล้ว' : 'ยังไม่มีประวัติข้อที่ตอบผิด')
+                  : 'ยังไม่มีประวัติข้อที่เคยตอบผิด'}
+              </h3>
+              <p class="qz-sub" style="margin-bottom: 1rem;">
+                ${scope === 'active' && resolvedCount > 0
+                  ? `คุณเคยแก้ข้อที่ผิดให้ถูกแล้ว ${resolvedCount} ข้อ กดดู "ประวัติเคยผิด" เพื่อทบทวนได้`
+                  : 'เมื่อทำข้อสอบในหมวดแยกบท แยกโรค หรือข้อสอบรายปีแล้วตอบผิด ระบบจะรวมไว้ให้ทบทวนและทำใหม่ตรงนี้ทันที'}
+              </p>
+              <div style="display:flex; justify-content:center; gap:0.5rem; flex-wrap:wrap;">
+                ${scope === 'active' && resolvedCount > 0 ? `<button type="button" class="qz-btn-outline" id="qzShowHistEmptyBtn">ดูประวัติเคยผิด (${historyList.length} ข้อ)</button>` : ''}
+                <button type="button" class="qz-btn-solid" id="qzGoPracticeBtn">ไปทำข้อสอบแยกบท / แยกโรค</button>
+              </div>
+            </div>
+          ` : (filteredItems.length === 0 ? `
+            <div class="qz-panel qz-wrong-empty">
+              <p class="qz-sub" style="margin-bottom: 0.75rem;">ไม่พบข้อที่ผิดตามคำค้นหาหรือตัวกรองที่เลือก</p>
+              <button type="button" class="qz-btn-outline" id="qzClearWrongFilterBtn">ล้างตัวกรอง</button>
+            </div>
+          ` : `
+            <div class="qz-wrong-groups">
+              ${shownGroups.map(grp => {
+                const isCollapsed = collapsedGroups.has(grp.key);
+                const activeInGrp = grp.items.filter(x => !x._isResolved).length;
+                return `
+                  <section class="qz-wrong-group ${isCollapsed ? 'is-collapsed' : ''}" data-wrong-section="${this.escapeHtml(grp.key)}">
+                    <div class="qz-wrong-group-head">
+                      <div class="qz-wrong-group-info">
+                        <h3 class="qz-wrong-group-title">
+                          <span>${this.escapeHtml(grp.title)}</span>
+                          <span class="qz-stat-pill is-danger" style="font-size:0.75rem; padding:0.18rem 0.55rem;">${grp.items.length} ข้อ</span>
+                          ${scope === 'history' && activeInGrp < grp.items.length ? `<span class="qz-stat-pill is-success" style="font-size:0.75rem; padding:0.18rem 0.55rem;">แก้แล้ว ${grp.items.length - activeInGrp}</span>` : ''}
+                        </h3>
+                        ${grp.sub ? `<div class="qz-wrong-group-sub">${this.escapeHtml(grp.sub)}</div>` : ''}
+                      </div>
+                      <div class="qz-wrong-group-actions">
+                        <button type="button" class="qz-btn-outline" style="padding: 0.36rem 0.78rem; font-size: 0.8rem;" data-retry-wrong-grp="${this.escapeHtml(grp.key)}">
+                          ${this.qzIcon('reset', 13)} ทำใหม่เฉพาะหมวดนี้ (${grp.items.length})
+                        </button>
+                        <button type="button" class="qz-btn-soft" style="padding: 0.36rem 0.7rem;" data-toggle-wrong-grp="${this.escapeHtml(grp.key)}">
+                          ${isCollapsed ? 'ดูรายละเอียด' : 'ซ่อนรายการ'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="qz-wrong-list">
+                      ${grp.items.map(item => {
+                        const labels = item.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
+                        const opts = item.options || [];
+                        const pickedIdx = item._wrongPickedIdx;
+                        const pickedKey = typeof pickedIdx === 'number' ? (labels[pickedIdx] || String(pickedIdx + 1)) : '?';
+                        const pickedTxt = typeof pickedIdx === 'number' && opts[pickedIdx] ? opts[pickedIdx] : '(ไม่ได้เลือก)';
+                        const validIdxs = this.getQuestionCorrectIndices(item);
+                        const rightTextList = validIdxs.length
+                          ? validIdxs.map(i => `${labels[i] || (i + 1)}. ${opts[i] || ''}`).join('  |  ')
+                          : (item.answerSource === 'no_answer' ? 'เฉลยทางการระบุ: ไม่มีคำตอบ' : '-');
+                        return `
+                          <article class="qz-wrong-item" data-wrong-qid="${this.escapeHtml(item.id)}">
+                            <div class="qz-wrong-item-head">
+                              <div style="display:flex; flex-wrap:wrap; gap:0.38rem; align-items:center;">
+                                <span class="qz-subtopic-pill">${this.escapeHtml(item._sourceLabel || item._sourceTitle)}</span>
+                                ${item.subtopic ? `<span class="qz-src-badge">${this.escapeHtml(item.subtopic)}</span>` : ''}
+                                ${item._diseaseTitle && groupBy === 'source' ? `<span class="qz-src-badge is-ai">${this.escapeHtml(item._diseaseTitle)}</span>` : ''}
+                              </div>
+                              <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;">
+                                ${item._isResolved
+                                  ? `<span class="qz-src-badge is-file">แก้ถูกแล้ว</span>`
+                                  : `<span class="qz-stat-pill is-danger" style="font-size:0.74rem; padding:0.16rem 0.52rem;">ผิด ${item._wrongCount > 1 ? `${item._wrongCount} ครั้ง` : 'รอบล่าสุด'}</span>`}
+                              </div>
+                            </div>
+
+                            ${item.caseText ? `<div class="qz-wrong-case">${this.escapeHtml(item.caseText.length > 260 ? item.caseText.slice(0, 260) + '...' : item.caseText)}</div>` : ''}
+                            <div class="qz-wrong-stem">${this.escapeHtml(item.stem)}</div>
+
+                            <div class="qz-wrong-diff">
+                              <div class="qz-diff-row is-wrong">
+                                <span class="qz-diff-tag">ที่ตอบ (ผิด)</span>
+                                <span class="qz-diff-opt">${this.escapeHtml(pickedKey)}. ${this.escapeHtml(pickedTxt)}</span>
+                              </div>
+                              <div class="qz-diff-row is-right">
+                                <span class="qz-diff-tag">เฉลยที่ถูก</span>
+                                <span class="qz-diff-opt">${this.escapeHtml(rightTextList)}</span>
+                              </div>
+                            </div>
+
+                            <div class="qz-wrong-exp">
+                              <div class="qz-wrong-exp-label">เหตุผล &amp; จุดที่ควรจำ</div>
+                              <div class="qz-wrong-exp-body">${this.escapeHtml(item.explanation || `คำตอบที่ถูกต้องคือ ${rightTextList}`)}</div>
+                              ${this.buildDataRefHtml(item)}
+                            </div>
+
+                            <div class="qz-wrong-item-foot">
+                              <span style="font-size:0.78rem; color:var(--qb-muted);">${item.pdfPage ? `หน้า PDF ${item.pdfPage}` : ''}</span>
+                              <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
+                                ${item._sourceHref ? `<a href="${item._sourceHref}" class="qz-btn-soft">เปิดดูในชุดเดิม</a>` : ''}
+                                <button type="button" class="qz-btn-outline" style="padding:0.36rem 0.8rem; font-size:0.81rem;" data-retry-wrong-one="${this.escapeHtml(item.id)}">
+                                  ${this.qzIcon('reset', 13)} ลองทำข้อนี้ใหม่
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        `;
+                      }).join('')}
+                    </div>
+                  </section>
+                `;
+              }).join('')}
+            </div>
+          `)}
+        `;
+
+        const findGroupByKey = (k) => shownGroups.find(g => g.key === k);
+
+        tabBox.querySelectorAll('[data-wrong-scope]').forEach(b => b.addEventListener('click', () => {
+          scope = b.getAttribute('data-wrong-scope') || 'active';
+          this.state.quizWrongScope = scope;
+          catFilter = 'all';
+          paintWrongView();
+        }));
+
+        tabBox.querySelectorAll('[data-wrong-grp]').forEach(b => b.addEventListener('click', () => {
+          groupBy = b.getAttribute('data-wrong-grp') || 'disease';
+          this.state.quizWrongGroupBy = groupBy;
+          catFilter = 'all';
+          collapsedGroups.clear();
+          paintWrongView();
+        }));
+
+        document.getElementById('qzWrongCatFilter')?.addEventListener('change', (e) => {
+          catFilter = e.target.value || 'all';
+          paintWrongView();
+        });
+
+        document.getElementById('qzWrongSearchInput')?.addEventListener('input', (e) => {
+          queryStr = e.target.value || '';
+          const pos = e.target.selectionStart;
+          paintWrongView();
+          const inp = document.getElementById('qzWrongSearchInput');
+          if (inp) {
+            inp.focus();
+            if (typeof pos === 'number') inp.setSelectionRange(pos, pos);
+          }
+        });
+
+        document.getElementById('qzStartRetryAllBtn')?.addEventListener('click', () => {
+          if (!filteredItems.length) return;
+          const catObj = catFilter !== 'all' ? findGroupByKey(catFilter) : null;
+          const title = catObj
+            ? `ทำใหม่เฉพาะข้อที่ผิด · ${catObj.title}`
+            : `ทำใหม่เฉพาะข้อที่ผิดทั้งหมด (${filteredItems.length} ข้อ)`;
+          this.launchRetryWrongSession(filteredItems, title);
+        });
+
+        tabBox.querySelectorAll('[data-retry-wrong-grp]').forEach(b => b.addEventListener('click', () => {
+          const grp = findGroupByKey(b.getAttribute('data-retry-wrong-grp'));
+          if (grp && grp.items.length) {
+            this.launchRetryWrongSession(grp.items, `ทำใหม่ข้อที่ผิด · ${grp.title}`);
+          }
+        }));
+
+        tabBox.querySelectorAll('[data-retry-wrong-one]').forEach(b => b.addEventListener('click', () => {
+          const qid = b.getAttribute('data-retry-wrong-one');
+          const found = filteredItems.find(x => x.id === qid) || baseList.find(x => x.id === qid);
+          if (found) {
+            this.launchRetryWrongSession([found], `ทำใหม่ข้อที่ผิด · ${found._diseaseTitle || found._sourceTitle}`);
+          }
+        }));
+
+        tabBox.querySelectorAll('[data-toggle-wrong-grp]').forEach(b => b.addEventListener('click', () => {
+          const k = b.getAttribute('data-toggle-wrong-grp');
+          if (collapsedGroups.has(k)) collapsedGroups.delete(k);
+          else collapsedGroups.add(k);
+          paintWrongView();
+        }));
+
+        document.getElementById('qzClearResolvedBtn')?.addEventListener('click', () => {
+          if (!this.state.quizWrongHistory) return;
+          Object.keys(this.state.quizWrongHistory).forEach(id => {
+            if (this.state.quizWrongHistory[id]?.resolved) delete this.state.quizWrongHistory[id];
+          });
+          this.saveQuizWrongHistory();
+          paintWrongView();
+        });
+
+        document.getElementById('qzClearWrongFilterBtn')?.addEventListener('click', () => {
+          catFilter = 'all';
+          queryStr = '';
+          paintWrongView();
+        });
+
+        document.getElementById('qzShowHistEmptyBtn')?.addEventListener('click', () => {
+          scope = 'history';
+          this.state.quizWrongScope = 'history';
+          paintWrongView();
+        });
+
+        document.getElementById('qzGoPracticeBtn')?.addEventListener('click', () => {
+          this.state.quizHubTab = 'chapter';
+          this.renderQuizHub(c);
+        });
+      };
+
+      paintWrongView();
+    };
+
     const renderActiveTab = () => {
       if (this.state.quizHubTab === 'year') renderYearTab();
+      else if (this.state.quizHubTab === 'wrong') renderWrongTab();
       else if (this.state.quizHubTab === 'random') renderRandomTab();
       else renderChapterTab();
     };
@@ -2552,6 +3009,13 @@ ${this.escapeHtml(df.rawText)}
         c.querySelectorAll('[data-qz-tab]').forEach(b => b.classList.toggle('active', b === btn));
         renderActiveTab();
       });
+    });
+
+    document.getElementById('qzJumpWrongTabBtn')?.addEventListener('click', () => {
+      this.state.quizHubTab = 'wrong';
+      c.querySelectorAll('[data-qz-tab]').forEach(b => b.classList.toggle('active', b.getAttribute('data-qz-tab') === 'wrong'));
+      renderActiveTab();
+      document.getElementById('qzTabContent')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
     c.querySelectorAll('[data-hub-order]').forEach(btn => {
@@ -2565,14 +3029,16 @@ ${this.escapeHtml(df.rawText)}
     document.getElementById('qzResetAllBtn')?.addEventListener('click', () => {
       if (!window.confirm('ต้องการล้างประวัติการทำข้อสอบทั้งหมดใช่หรือไม่?')) return;
       this.state.quizAnswers = {};
+      this.state.quizWrongHistory = {};
       this.saveQuizAnswers();
+      this.saveQuizWrongHistory();
       this.renderQuizHub(c);
     });
 
     renderActiveTab();
   },
 
-  renderQuizRunner(c, chapterId, qNumParam, subtopicFilter = '') {
+  renderQuizRunner(c, chapterId, qNumParam, subtopicFilter = '', qIdParam = '') {
     const chData = window.CC1_QUIZ_DATA || { chapters: [] };
     const ch = (chData.chapters || []).find(x => x.id === chapterId) || (chData.chapters || [])[0];
     if (!ch) { this.renderQuizHub(c); return; }
@@ -2591,11 +3057,12 @@ ${this.escapeHtml(df.rawText)}
       baseHash: `#/quiz?chapter=${ch.id}${subtopicFilter ? '&sub=' + encodeURIComponent(subtopicFilter) : ''}`,
       title: `บทที่ ${ch.chapterNum}. ${ch.title}${subTag}`,
       rawQuestions: qs,
-      qNumParam
+      qNumParam,
+      qIdParam
     });
   },
 
-  renderDiseaseQuizRunner(c, diseaseId, qNumParam) {
+  renderDiseaseQuizRunner(c, diseaseId, qNumParam, qIdParam = '') {
     const dis = this.getDiseaseDecks().find(d => d.id === diseaseId);
     if (!dis) { this.renderQuizHub(c); return; }
     this.renderUnifiedRunner(c, {
@@ -2604,11 +3071,12 @@ ${this.escapeHtml(df.rawText)}
       baseHash: `#/quiz?disease=${encodeURIComponent(dis.id)}`,
       title: `แยกตามโรค: ${dis.title}`,
       rawQuestions: dis.questions,
-      qNumParam
+      qNumParam,
+      qIdParam
     });
   },
 
-  renderPastExamRunner(c, yearId, dayParam, qNumParam) {
+  renderPastExamRunner(c, yearId, dayParam, qNumParam, qIdParam = '') {
     const peData = window.CC1_PAST_EXAM_DATA || { chapters: [] };
     const yr = (peData.chapters || []).find(x => x.id === yearId) || (peData.chapters || [])[0];
     if (!yr) { this.renderQuizHub(c); return; }
@@ -2621,7 +3089,8 @@ ${this.escapeHtml(df.rawText)}
       baseHash: `#/quiz?year=${yr.id}&day=${dayFilter}`,
       title: `${yr.title}${dayTag}`,
       rawQuestions: rawQs,
-      qNumParam
+      qNumParam,
+      qIdParam
     });
   },
 
@@ -2643,28 +3112,59 @@ ${this.escapeHtml(df.rawText)}
     });
   },
 
+  renderRetryWrongRunner(c, qNumParam) {
+    const sess = this.state.quizRetrySession;
+    if (!sess || !sess.questions || !sess.questions.length) {
+      this.state.quizHubTab = 'wrong';
+      this.renderQuizHub(c);
+      return;
+    }
+    this.renderUnifiedRunner(c, {
+      setKey: '__retry_wrong_session__',
+      isRetryWrongSession: true,
+      prevWrongMap: sess.prevWrongMap || {},
+      backTab: 'wrong',
+      baseHash: '#/quiz?retrywrong=1',
+      title: sess.title,
+      rawQuestions: sess.questions,
+      qNumParam
+    });
+  },
+
   renderUnifiedRunner(c, cfg) {
-    let qs = cfg.isRandomSession
+    const sessionObj = cfg.isRetryWrongSession
+      ? this.state.quizRetrySession
+      : (cfg.isRandomSession ? this.state.quizRandomSession : null);
+    const isAdhoc = !!(cfg.isRandomSession || cfg.isRetryWrongSession);
+
+    let qs = isAdhoc
       ? cfg.rawQuestions
       : this.getOrderedQuestions(cfg.setKey, cfg.rawQuestions);
     if (!qs.length) { this.renderQuizHub(c); return; }
 
-    let filterMode = this.state.quizFilter || 'all';
+    let filterMode = isAdhoc ? 'all' : (this.state.quizFilter || 'all');
     let currentPos = (cfg.qNumParam >= 1 && cfg.qNumParam <= qs.length) ? cfg.qNumParam : 1;
+    if (cfg.qIdParam) {
+      const targetById = qs.find(x => x.id === cfg.qIdParam);
+      if (targetById) currentPos = targetById.displayNo;
+    }
     let showMap = false;
     let examMode = this.state.quizExamMode || 'instant';
-    let simSubmitted = cfg.isRandomSession ? !!this.state.quizRandomSession.simSubmitted : false;
+    let simSubmitted = sessionObj ? !!sessionObj.simSubmitted : false;
 
-    const getAnsStore = () => (examMode === 'sim' && cfg.isRandomSession)
-      ? this.state.quizRandomSession.simAnswers
-      : (examMode === 'sim' ? (this._localSimAnswers || (this._localSimAnswers = {})) : this.state.quizAnswers);
-
-    if (cfg.isRandomSession && !this.state.quizRandomSession.simAnswers) {
-      this.state.quizRandomSession.simAnswers = {};
-    }
-    if (!cfg.isRandomSession) {
+    if (sessionObj) {
+      if (!sessionObj.simAnswers) sessionObj.simAnswers = {};
+      if (cfg.isRetryWrongSession && !sessionObj.retryAnswers) sessionObj.retryAnswers = {};
+    } else {
       this._localSimAnswers = {};
     }
+
+    const getAnsStore = () => {
+      if (examMode === 'sim') {
+        return sessionObj ? sessionObj.simAnswers : (this._localSimAnswers || (this._localSimAnswers = {}));
+      }
+      return cfg.isRetryWrongSession ? sessionObj.retryAnswers : this.state.quizAnswers;
+    };
 
     const getFilteredQs = () => {
       const ans = getAnsStore();
@@ -2760,7 +3260,12 @@ ${this.escapeHtml(df.rawText)}
               ${(examMode === 'instant' || simSubmitted) ? `<button type="button" class="qz-seg-mini-btn ${filterMode === 'wrong' ? 'active' : ''}" data-qz-mode="wrong">ข้อที่ผิด (${st.wrong})</button>` : ''}
             </div>
             <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center;">
-              ${!cfg.isRandomSession ? `
+              ${(!cfg.isRetryWrongSession && st.wrong > 0 && (examMode === 'instant' || simSubmitted)) ? `
+                <button type="button" class="qz-btn-outline" id="qzRunnerRetryWrongBtn" style="padding: 0.34rem 0.72rem; font-size: 0.8rem;">
+                  ${this.qzIcon('reset', 13)} ทำใหม่ข้อที่ผิด (${st.wrong})
+                </button>
+              ` : ''}
+              ${!isAdhoc ? `
                 <div class="qz-seg-mini">
                   <button type="button" class="qz-seg-mini-btn ${!this.state.quizShuffleOn ? 'active' : ''}" data-run-order="orig" title="เรียงตามข้อ 1, 2, 3 ต้นฉบับ">
                     ${this.qzIcon('list', 13)} ต้นฉบับ
@@ -2793,7 +3298,8 @@ ${this.escapeHtml(df.rawText)}
                   </div>
                 </div>
                 <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-                  <button type="button" class="qz-btn-outline" data-qz-mode="wrong">ทบทวนข้อที่ผิด (${st.wrong})</button>
+                  ${st.wrong > 0 ? `<button type="button" class="qz-btn-outline" data-qz-mode="wrong">ดูข้อที่ผิด (${st.wrong})</button>` : ''}
+                  ${(!cfg.isRetryWrongSession && st.wrong > 0) ? `<button type="button" class="qz-btn-outline" id="qzSimRetryWrongBtn">${this.qzIcon('reset', 14)} ลองทำใหม่เฉพาะข้อที่ผิด (${st.wrong})</button>` : ''}
                   <button type="button" class="qz-btn-solid" id="qzSimRestartBtn">ทำรอบใหม่อีกครั้ง</button>
                 </div>
               </div>
@@ -2876,7 +3382,12 @@ ${this.escapeHtml(df.rawText)}
                           ? `ถูกต้อง (ข้อ ${this.escapeHtml(correctLabelsText)}${validIndices.length > 1 ? ' · ตอบได้หลายข้อ' : ''})`
                           : `ยังไม่ถูกต้อง — เฉลยคือข้อ ${this.escapeHtml(correctLabelsText)}`)}
                     </span>
-                    ${examMode === 'instant' ? `<button type="button" class="qz-btn-soft" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.24rem 0.62rem;">ทำใหม่ข้อนี้</button>` : ''}
+                    <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+                      ${(cfg.isRetryWrongSession && typeof cfg.prevWrongMap?.[q.id] === 'number')
+                        ? `<span class="qz-src-badge is-warn">รอบก่อนเคยเลือกข้อ ${this.escapeHtml(labels[cfg.prevWrongMap[q.id]] || String(cfg.prevWrongMap[q.id] + 1))}</span>`
+                        : ''}
+                      ${examMode === 'instant' ? `<button type="button" class="qz-btn-soft" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.24rem 0.62rem;">ทำใหม่ข้อนี้</button>` : ''}
+                    </div>
                   </div>
                   <div class="qz-feedback-body">
                     ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabelsText}`)}
@@ -2962,10 +3473,35 @@ ${this.escapeHtml(df.rawText)}
         renderBody();
       });
 
+      const commitInstantAnswer = (question, picked) => {
+        const store = getAnsStore();
+        if (typeof store[question.id] === 'number') return false;
+        store[question.id] = picked;
+        this.state.quizAnswers[question.id] = picked;
+        this.recordQuizAttempt(question, picked);
+        this.saveQuizAnswers();
+        return true;
+      };
+
+      const startRunnerWrongRetry = () => {
+        const curAns = getAnsStore();
+        const wrongOnly = qs.filter(item => typeof curAns[item.id] === 'number' && !this.isQuizChoiceCorrect(item, curAns[item.id]));
+        if (wrongOnly.length) {
+          this.launchRetryWrongSession(wrongOnly, `ทำใหม่ข้อที่ผิด · ${cfg.title}`);
+        }
+      };
+
+      document.getElementById('qzRunnerRetryWrongBtn')?.addEventListener('click', startRunnerWrongRetry);
+      document.getElementById('qzSimRetryWrongBtn')?.addEventListener('click', startRunnerWrongRetry);
+
       document.getElementById('qzSubmitSimBtn')?.addEventListener('click', () => {
         simSubmitted = true;
-        if (cfg.isRandomSession) this.state.quizRandomSession.simSubmitted = true;
-        Object.entries(getAnsStore()).forEach(([id, v]) => { this.state.quizAnswers[id] = v; });
+        if (sessionObj) sessionObj.simSubmitted = true;
+        const qById = new Map(qs.map(item => [item.id, item]));
+        Object.entries(getAnsStore()).forEach(([id, v]) => {
+          this.state.quizAnswers[id] = v;
+          if (qById.has(id)) this.recordQuizAttempt(qById.get(id), v);
+        });
         this.saveQuizAnswers();
         this.clearQuizTimer();
         renderBody();
@@ -2974,9 +3510,9 @@ ${this.escapeHtml(df.rawText)}
 
       document.getElementById('qzSimRestartBtn')?.addEventListener('click', () => {
         simSubmitted = false;
-        if (cfg.isRandomSession) {
-          this.state.quizRandomSession.simSubmitted = false;
-          this.state.quizRandomSession.simAnswers = {};
+        if (sessionObj) {
+          sessionObj.simSubmitted = false;
+          sessionObj.simAnswers = {};
         } else {
           this._localSimAnswers = {};
         }
@@ -2991,9 +3527,7 @@ ${this.escapeHtml(df.rawText)}
         btn.addEventListener('click', () => {
           const picked = parseInt(btn.getAttribute('data-qz-opt'), 10);
           if (examMode === 'instant') {
-            if (typeof this.state.quizAnswers[q.id] === 'number') return;
-            this.state.quizAnswers[q.id] = picked;
-            this.saveQuizAnswers();
+            if (!commitInstantAnswer(q, picked)) return;
             renderBody();
             requestAnimationFrame(() => {
               document.querySelector('.qz-feedback-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -3006,17 +3540,17 @@ ${this.escapeHtml(df.rawText)}
       });
 
       document.getElementById('qzRetryOneBtn')?.addEventListener('click', () => {
-        delete this.state.quizAnswers[q.id];
-        this.saveQuizAnswers();
+        delete getAnsStore()[q.id];
+        if (!cfg.isRetryWrongSession) this.saveQuizAnswers();
         renderBody();
       });
 
       document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
         const store = getAnsStore();
         qs.forEach(item => { delete store[item.id]; });
-        if (examMode === 'instant') this.saveQuizAnswers();
+        if (examMode === 'instant' && !cfg.isRetryWrongSession) this.saveQuizAnswers();
         simSubmitted = false;
-        if (cfg.isRandomSession) this.state.quizRandomSession.simSubmitted = false;
+        if (sessionObj) sessionObj.simSubmitted = false;
         filterMode = 'all';
         this.state.quizFilter = 'all';
         currentPos = 1;
@@ -3054,10 +3588,8 @@ ${this.escapeHtml(df.rawText)}
         } else if (/^[1-5]$/.test(e.key)) {
           const idx = parseInt(e.key, 10) - 1;
           if (idx >= 0 && idx < (q.options || []).length) {
-            if (examMode === 'instant' && typeof this.state.quizAnswers[q.id] !== 'number') {
-              this.state.quizAnswers[q.id] = idx;
-              this.saveQuizAnswers();
-              renderBody();
+            if (examMode === 'instant') {
+              if (commitInstantAnswer(q, idx)) renderBody();
             } else if (examMode === 'sim' && !simSubmitted) {
               getAnsStore()[q.id] = idx;
               renderBody();
