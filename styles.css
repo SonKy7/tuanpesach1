@@ -4311,7 +4311,73 @@ button.qz-stat-pill.is-clickable:hover {
   font-size: 0.78rem;
   font-weight: 800;
   color: var(--qb-blue);
-  margin-bottom: 0.32rem;
+  margin-bottom: 0.45rem;
+}
+
+.qz-case-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+  line-height: 1.72;
+}
+
+.qz-case-hdr {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 0.14rem 0.58rem;
+  border-radius: 6px;
+  background: var(--qb-blue-soft);
+  color: var(--qb-blue);
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin-bottom: 0.1rem;
+}
+
+.qz-case-subhdr {
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--qb-text);
+  margin-top: 0.25rem;
+}
+
+.qz-case-p {
+  margin: 0;
+  color: var(--qb-text);
+  word-break: break-word;
+}
+
+.qz-case-p.is-followup {
+  margin-top: 0.25rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--qb-border);
+  font-weight: 600;
+}
+
+.qz-case-kv {
+  color: var(--qb-text);
+  word-break: break-word;
+}
+
+.qz-case-k {
+  color: var(--qb-blue);
+  font-weight: 800;
+}
+
+.qz-case-li {
+  padding-left: 0.9rem;
+  text-indent: -0.65rem;
+  color: var(--qb-text);
+}
+
+.qz-case-row {
+  padding: 0.16rem 0.55rem;
+  border-radius: 6px;
+  background: var(--qb-surface);
+  border: 1px solid var(--qb-border);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .qz-stem {

@@ -2100,6 +2100,42 @@ ${this.escapeHtml(df.rawText)}
     return `${mm}:${ss}`;
   },
 
+  formatCaseHtml(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    const lines = raw.replace(/\r\n?/g, '\n').split('\n').map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return '';
+    const secKeyRe = /^((?:CC|PI|HPI|PMH|PHM|PH|SH|FH|MH|ALL|Dx|DI|Rx|RX|PE|Lab|Labs|UA|CBC|LFT|VA|ECG|EKG|CXR|Spirometry(?:\s*\([^)]+\))?|ข้อมูลทั่วไป|อาการสำคัญ|ประวัติ(?:ปัจจุบัน|โรคประจำตัว|การใช้ยาประจำ|การใช้ยา|การแพ้ยา|แพ้ยา|ครอบครัว|สังคม)?|โรคประจำตัว|ประวัติแพ้ยา|การตรวจร่างกาย|ผลการตรวจ(?:ทางห้องปฏิบัติการ|ร่างกาย|เลือด|ปัสสาวะ|วิเคราะห์)(?:\s*(?:เป็นดังนี้|พบ|ดังนี้))?|ผลตรวจ(?:ทางห้องปฏิบัติการ|ร่างกาย|เลือด|ปัสสาวะ)(?:\s*(?:เป็นดังนี้|พบ|ดังนี้))?|ผลการทำแบบทดสอบ[^\n:：]{0,25}|รายการยา|ยาที่ใช้ประจำ|ยาที่ได้รับ|ได้รับยาดังนี้|สั่งจ่ายยาดังนี้|กำหนดให้)\s*[:：]?)\s*(.*)$/i;
+    const drugRowRe = /^[A-Z][a-zA-Z0-9\s/-]{1,42}(?:\(\d+[^)]*\)|\s+\d+\s*(?:mg|mcg|g|tab|cap|puff|ml|drop|sachet))\s+.*$/i;
+    const labRowRe = /^(?:Hb|Hct|WBC|Plt|Platelet|MCV|MCH|MCHC|RDW|RBC|BUN|Cr|SCr|eGFR|Na|K|Cl|HCO3|CO2|FBS|HbA1c|LDL|HDL|TG|TC|AST|ALT|ALP|TB|DB|Albumin|Ca|Mg|PO4|Uric)\s+\d/i;
+
+    const blocks = lines.map(l => {
+      if (/^(?:สถานการณ์|กรณีศึกษา|จากกรณีศึกษา)/.test(l)) {
+        return `<div class="qz-case-hdr">${this.escapeHtml(l)}</div>`;
+      }
+      if (/^(?:อีก\s+\d+\s*(?:วัน|สัปดาห์|เดือน|ปี)ต่อมา|ต่อมาอีก)/.test(l)) {
+        return `<p class="qz-case-p is-followup">${this.escapeHtml(l)}</p>`;
+      }
+      if (/^(?:[-•*]|\(\d+\)\s*[^\dXx*]|\d+[.)]\s+)/.test(l)) {
+        return `<div class="qz-case-li">${this.escapeHtml(l)}</div>`;
+      }
+      const m = l.match(secKeyRe);
+      if (m) {
+        const key = m[1];
+        const rest = m[2];
+        if (!rest) {
+          return `<div class="qz-case-subhdr">${this.escapeHtml(key)}</div>`;
+        }
+        return `<div class="qz-case-kv"><strong class="qz-case-k">${this.escapeHtml(key)}</strong> <span>${this.escapeHtml(rest)}</span></div>`;
+      }
+      if (drugRowRe.test(l) || labRowRe.test(l)) {
+        return `<div class="qz-case-row">${this.escapeHtml(l)}</div>`;
+      }
+      return `<p class="qz-case-p">${this.escapeHtml(l)}</p>`;
+    });
+
+    return `<div class="qz-case-body">${blocks.join('')}</div>`;
+  },
+
   buildDataRefHtml(q) {
     const ref = q?.dataRef || (Array.isArray(q?.dataRefs) ? q.dataRefs[0] : null);
     if (!ref || !ref.topicId) return '';
@@ -3692,7 +3728,7 @@ ${this.escapeHtml(df.rawText)}
               ${(q.caseText || (q.caseImages && q.caseImages.length)) ? `
                 <div class="qz-case-box">
                   <div class="qz-case-label">กรณีศึกษา / ข้อมูลประกอบโจทย์</div>
-                  ${q.caseText ? `<div>${this.escapeHtml(q.caseText)}</div>` : ''}
+                  ${q.caseText ? this.formatCaseHtml(q.caseText) : ''}
                   ${(q.caseImages && q.caseImages.length) ? `
                     <div class="qz-fig-wrap">
                       ${q.caseImages.map(src => `<img src="${src}" alt="ภาพประกอบกรณีศึกษา" class="qz-fig-img" loading="lazy">`).join('')}
