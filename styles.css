@@ -3380,7 +3380,8 @@ abbr.cc1-abbr:focus {
    clean search input, droplist select, capsule switches & outline buttons
    ========================================================================== */
 .qz-hub-wrap,
-.qz-runner-wrap {
+.qz-runner-wrap,
+.qz-modal-backdrop {
   --qb-blue: #3B66F5;
   --qb-blue-hover: #2952DF;
   --qb-blue-soft: #EEF3FE;
@@ -3400,7 +3401,8 @@ abbr.cc1-abbr:focus {
 }
 
 [data-theme="dark"] .qz-hub-wrap,
-[data-theme="dark"] .qz-runner-wrap {
+[data-theme="dark"] .qz-runner-wrap,
+[data-theme="dark"] .qz-modal-backdrop {
   --qb-blue: #527DF9;
   --qb-blue-hover: #3F6BF2;
   --qb-blue-soft: rgba(82, 125, 249, 0.14);
