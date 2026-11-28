@@ -103,6 +103,24 @@ const App = {
     // Drawer triggers (☰ FAB and Topbar)
     // floatingMenuBtn removed
     document.getElementById('topbarMenuBtn')?.addEventListener('click', () => this.openDrawer());
+    document.getElementById('topbarRefreshBtn')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      btn?.classList.add('is-spinning');
+      const doHardReload = () => {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set('_r', String(Date.now()));
+          window.location.replace(url.toString());
+        } catch (err) {
+          window.location.reload();
+        }
+      };
+      if (typeof caches !== 'undefined' && caches.keys) {
+        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).finally(doHardReload);
+      } else {
+        doHardReload();
+      }
+    });
     document.getElementById('drawerCloseBtn')?.addEventListener('click', () => this.closeDrawer());
     document.getElementById('drawerBackdrop')?.addEventListener('click', () => this.closeDrawer());
     document.querySelector('.brand')?.addEventListener('click', (e) => {

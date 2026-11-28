@@ -1332,6 +1332,7 @@ tbody tr:hover {
     box-sizing: border-box !important;
   }
 
+  .topbar-left,
   .topbar-hamburger-btn {
     grid-column: 1 !important;
     grid-row: 1 !important;
@@ -1838,6 +1839,22 @@ tbody tr:hover {
   }
 }
 
+
+.topbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.topbar-refresh-btn.is-spinning svg {
+  animation: qzSpinRefresh 0.65s linear infinite;
+}
+
+@keyframes qzSpinRefresh {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 /* Top-Left Hamburger Button */
 
