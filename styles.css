@@ -5094,3 +5094,148 @@ button.qz-stat-pill.is-clickable:hover {
 .qz-btn-danger-solid:hover {
   filter: brightness(0.92);
 }
+
+/* Custom Answer Key Override Button & Modal */
+.qz-src-badge.is-custom {
+  background: var(--qb-blue-soft);
+  border-color: var(--qb-blue);
+  color: var(--qb-blue);
+  font-weight: 800;
+}
+
+.qz-btn-edit-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.62rem;
+  border-radius: 9999px;
+  border: 1px solid var(--qb-border-strong);
+  background: var(--qb-surface);
+  color: var(--qb-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.qz-btn-edit-key:hover,
+.qz-btn-edit-key.is-edited {
+  border-color: var(--qb-blue);
+  background: var(--qb-blue-soft);
+  color: var(--qb-blue);
+}
+
+.qz-modal-card.is-wide {
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.qz-edit-stem {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--qb-text);
+  background: var(--qb-subtle);
+  border: 1px solid var(--qb-border);
+  border-radius: 9px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+.qz-edit-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.qz-edit-opt {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.58rem 0.8rem;
+  border-radius: 10px;
+  border: 1.5px solid var(--qb-border);
+  background: var(--qb-surface);
+  color: var(--qb-text);
+  font-family: var(--font-sans);
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.qz-edit-opt:hover {
+  border-color: var(--qb-blue);
+  background: var(--qb-subtle);
+}
+
+.qz-edit-opt.is-checked {
+  border-color: var(--qb-ok);
+  background: var(--qb-ok-bg);
+}
+
+.qz-edit-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1.5px solid var(--qb-border-strong);
+  background: var(--qb-surface);
+  color: #FFFFFF;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.qz-edit-opt.is-checked .qz-edit-check {
+  border-color: var(--qb-ok);
+  background: var(--qb-ok);
+}
+
+.qz-edit-opt-txt {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.qz-edit-err {
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--qb-bad);
+}
+
+.qz-edit-note {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 9px;
+  border: 1px solid var(--qb-border-strong);
+  background: var(--qb-surface);
+  color: var(--qb-text);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  padding: 0.55rem 0.75rem;
+  resize: vertical;
+}
+
+.qz-edit-note:focus {
+  outline: none;
+  border-color: var(--qb-blue);
+  box-shadow: 0 0 0 3px var(--qb-blue-muted);
+}
+
+.qz-custom-note-box {
+  background: var(--qb-blue-soft);
+  border: 1px solid var(--qb-blue);
+  border-radius: 8px;
+  padding: 0.55rem 0.78rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.84rem;
+  color: var(--qb-text);
+  white-space: normal;
+}

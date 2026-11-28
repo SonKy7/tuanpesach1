@@ -9,6 +9,7 @@ const App = {
     expandedHomeGroups: {},
     quizAnswers: {},
     quizWrongHistory: {},
+    quizKeyOverrides: {},
     quizFilter: 'all',
     quizShuffle: {},
     quizShuffleOn: true,
@@ -148,6 +149,7 @@ const App = {
       this.state.bookmarkedTopics = JSON.parse(localStorage.getItem('cc1.bookmarkedTopics') || '{}');
       this.state.quizAnswers = JSON.parse(localStorage.getItem('cc1.quizAnswers') || '{}');
       this.state.quizWrongHistory = JSON.parse(localStorage.getItem('cc1.quizWrongHistory') || '{}');
+      this.state.quizKeyOverrides = JSON.parse(localStorage.getItem('cc1.quizKeyOverrides') || '{}');
       this.state.quizShuffle = JSON.parse(localStorage.getItem('cc1.quizShuffle') || '{}');
       const savedShufOn = localStorage.getItem('cc1.quizShuffleOn');
       if (savedShufOn !== null) this.state.quizShuffleOn = savedShufOn === 'true';
@@ -161,6 +163,7 @@ const App = {
       this.state.bookmarkedTopics = {};
       this.state.quizAnswers = {};
       this.state.quizWrongHistory = {};
+      this.state.quizKeyOverrides = {};
       this.state.quizShuffle = {};
     }
   },
@@ -175,6 +178,74 @@ const App = {
     try {
       localStorage.setItem('cc1.quizWrongHistory', JSON.stringify(this.state.quizWrongHistory || {}));
     } catch (e) {}
+  },
+
+  saveQuizKeyOverrides() {
+    try {
+      localStorage.setItem('cc1.quizKeyOverrides', JSON.stringify(this.state.quizKeyOverrides || {}));
+    } catch (e) {}
+  },
+
+  getOriginalCorrectIndices(q) {
+    if (!q) return [];
+    if (Array.isArray(q.answerIndices)) return q.answerIndices;
+    if (typeof q.answerIdx === 'number' && q.answerIdx >= 0) return [q.answerIdx];
+    return [];
+  },
+
+  getKeyOverride(q) {
+    if (!q || !q.id) return null;
+    const ov = this.state.quizKeyOverrides?.[q.id];
+    return (ov && Array.isArray(ov.answerIndices) && ov.answerIndices.length) ? ov : null;
+  },
+
+  syncWrongHistoryForQuestion(q) {
+    if (!q || !q.id) return;
+    if (!this.state.quizWrongHistory) this.state.quizWrongHistory = {};
+    const picked = this.state.quizAnswers?.[q.id];
+    if (typeof picked === 'number') {
+      const ok = this.isQuizChoiceCorrect(q, picked);
+      const prev = this.state.quizWrongHistory[q.id];
+      if (ok) {
+        if (prev && !prev.resolved) {
+          this.state.quizWrongHistory[q.id] = { ...prev, lastPickedIdx: picked, resolved: true, updatedAt: Date.now() };
+          this.saveQuizWrongHistory();
+        }
+      } else {
+        if (!prev || prev.resolved || prev.wrongIdx !== picked) {
+          this.state.quizWrongHistory[q.id] = {
+            wrongIdx: picked,
+            lastPickedIdx: picked,
+            count: (prev?.count || 0) + 1,
+            resolved: false,
+            updatedAt: Date.now()
+          };
+          this.saveQuizWrongHistory();
+        }
+      }
+    }
+  },
+
+  applyQuizKeyOverride(q, newIndices, note = '') {
+    if (!q || !q.id || !Array.isArray(newIndices) || !newIndices.length) return;
+    const clean = Array.from(new Set(newIndices.filter(n => typeof n === 'number' && n >= 0))).sort((a, b) => a - b);
+    if (!clean.length) return;
+    if (!this.state.quizKeyOverrides) this.state.quizKeyOverrides = {};
+    this.state.quizKeyOverrides[q.id] = {
+      answerIndices: clean,
+      note: String(note || '').trim(),
+      origIndices: this.getOriginalCorrectIndices(q),
+      updatedAt: Date.now()
+    };
+    this.saveQuizKeyOverrides();
+    this.syncWrongHistoryForQuestion(q);
+  },
+
+  revertQuizKeyOverride(q) {
+    if (!q || !q.id || !this.state.quizKeyOverrides?.[q.id]) return;
+    delete this.state.quizKeyOverrides[q.id];
+    this.saveQuizKeyOverrides();
+    this.syncWrongHistoryForQuestion(q);
   },
 
   recordQuizAttempt(q, pickedIdx) {
@@ -1854,14 +1925,13 @@ ${this.escapeHtml(df.rawText)}
   },
 
   getQuestionCorrectIndices(q) {
-    if (!q) return [];
-    if (Array.isArray(q.answerIndices)) return q.answerIndices;
-    if (typeof q.answerIdx === 'number' && q.answerIdx >= 0) return [q.answerIdx];
-    return [];
+    const ov = this.getKeyOverride(q);
+    if (ov) return ov.answerIndices;
+    return this.getOriginalCorrectIndices(q);
   },
 
   isQuizChoiceCorrect(q, pickedIdx) {
-    if (q?.answerSource === 'no_answer') return true; // never fail unanswerable book items
+    if (q?.answerSource === 'no_answer' && !this.getKeyOverride(q)) return true; // never fail unanswerable book items unless user overrides key
     const valid = this.getQuestionCorrectIndices(q);
     return valid.includes(pickedIdx);
   },
@@ -1899,6 +1969,7 @@ ${this.escapeHtml(df.rawText)}
       book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
       layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
       reset: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+      edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
     }[name] || '';
     return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
   },
@@ -2206,6 +2277,114 @@ ${this.escapeHtml(df.rawText)}
           onDone?.();
         }
       }]
+    });
+  },
+
+  showEditKeyDialog(q, onSaved) {
+    if (!q || !q.id) return;
+    document.getElementById('qzResetModalOverlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'qzResetModalOverlay';
+    overlay.className = 'qz-modal-backdrop';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+
+    const labels = q.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
+    const opts = q.options || [];
+    const existingOv = this.getKeyOverride(q);
+    const origIdxs = this.getOriginalCorrectIndices(q);
+    const origText = origIdxs.length
+      ? origIdxs.map(i => labels[i] || String(i + 1)).join(', ')
+      : (q.answerSource === 'no_answer' ? 'ไม่มีคำตอบในเฉลย' : '-');
+    let pickedSet = new Set(existingOv ? existingOv.answerIndices : origIdxs);
+    let noteVal = existingOv?.note || '';
+
+    const closeModal = () => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKey);
+
+    overlay.innerHTML = `
+      <div class="qz-modal-card is-wide">
+        <div class="qz-modal-head">
+          <div class="qz-modal-icon">${this.qzIcon('edit', 18)}</div>
+          <div style="min-width:0; flex:1;">
+            <h3 class="qz-modal-title">แก้ไขเฉลยด้วยตนเอง</h3>
+            <p class="qz-modal-sub">ปรับเฉลยแล้วคะแนน, วงแหวนสถิติ และหมวดข้อที่เคยผิดจะอัปเดตตามทันที (เฉลยเดิม: ${this.escapeHtml(origText)})</p>
+          </div>
+        </div>
+
+        <div class="qz-edit-stem">${this.escapeHtml((q.stem || '').length > 150 ? q.stem.slice(0, 150) + '...' : (q.stem || ''))}</div>
+
+        <div class="qz-edit-opts" id="qzEditOptsList">
+          ${opts.map((optTxt, i) => {
+            const key = labels[i] || String(i + 1);
+            const active = pickedSet.has(i);
+            return `
+              <button type="button" class="qz-edit-opt ${active ? 'is-checked' : ''}" data-edit-opt="${i}" aria-pressed="${active}">
+                <span class="qz-edit-check">${active ? this.qzIcon('check', 13) : ''}</span>
+                <span class="qz-opt-key" style="width:24px;height:24px;font-size:0.78rem;">${this.escapeHtml(key)}</span>
+                <span class="qz-edit-opt-txt">${this.escapeHtml(optTxt)}</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+        <div id="qzEditKeyErr" class="qz-edit-err" style="display:none;">กรุณาเลือกคำตอบที่ถูกต้องอย่างน้อย 1 ข้อ</div>
+
+        <div style="margin-top:0.75rem;">
+          <label for="qzEditKeyNote" style="display:block; font-size:0.78rem; font-weight:700; color:var(--qb-muted); margin-bottom:0.3rem;">เหตุผล / โน้ตของคุณ (ไม่บังคับ)</label>
+          <textarea id="qzEditKeyNote" class="qz-edit-note" rows="2" placeholder="เช่น อิงแนวทางรักษาปีล่าสุด ข้อนี้ตอบ...">${this.escapeHtml(noteVal)}</textarea>
+        </div>
+
+        <div class="qz-modal-actions-row" style="margin-top:0.9rem; justify-content:space-between; align-items:center;">
+          <div>
+            ${existingOv ? `<button type="button" class="qz-btn-soft" id="qzEditRevertBtn" style="color:var(--qb-bad);">${this.qzIcon('reset', 13)} คืนค่าเฉลยเดิม (${this.escapeHtml(origText)})</button>` : ''}
+          </div>
+          <div style="display:flex; gap:0.45rem;">
+            <button type="button" class="qz-btn-soft" id="qzEditCancelBtn">ยกเลิก</button>
+            <button type="button" class="qz-btn-solid" id="qzEditSaveBtn">${this.qzIcon('check', 14)} บันทึกเฉลย</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+    document.body.appendChild(overlay);
+
+    const errEl = document.getElementById('qzEditKeyErr');
+    overlay.querySelectorAll('[data-edit-opt]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.getAttribute('data-edit-opt'), 10);
+        if (pickedSet.has(idx)) pickedSet.delete(idx);
+        else pickedSet.add(idx);
+        const on = pickedSet.has(idx);
+        btn.classList.toggle('is-checked', on);
+        btn.setAttribute('aria-pressed', String(on));
+        const chk = btn.querySelector('.qz-edit-check');
+        if (chk) chk.innerHTML = on ? this.qzIcon('check', 13) : '';
+        if (errEl && pickedSet.size > 0) errEl.style.display = 'none';
+      });
+    });
+
+    document.getElementById('qzEditCancelBtn')?.addEventListener('click', closeModal);
+    document.getElementById('qzEditRevertBtn')?.addEventListener('click', () => {
+      this.revertQuizKeyOverride(q);
+      closeModal();
+      onSaved?.();
+    });
+    document.getElementById('qzEditSaveBtn')?.addEventListener('click', () => {
+      if (!pickedSet.size) {
+        if (errEl) errEl.style.display = 'block';
+        return;
+      }
+      const note = document.getElementById('qzEditKeyNote')?.value || '';
+      this.applyQuizKeyOverride(q, Array.from(pickedSet), note);
+      closeModal();
+      onSaved?.();
     });
   },
 
@@ -3299,6 +3478,7 @@ ${this.escapeHtml(df.rawText)}
                       ${grp.items.map(item => {
                         const labels = item.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
                         const opts = item.options || [];
+                        const ov = this.getKeyOverride(item);
                         const pickedIdx = item._wrongPickedIdx;
                         const pickedKey = typeof pickedIdx === 'number' ? (labels[pickedIdx] || String(pickedIdx + 1)) : '?';
                         const pickedTxt = typeof pickedIdx === 'number' && opts[pickedIdx] ? opts[pickedIdx] : '(ไม่ได้เลือก)';
@@ -3313,6 +3493,7 @@ ${this.escapeHtml(df.rawText)}
                                 <span class="qz-subtopic-pill">${this.escapeHtml(item._sourceLabel || item._sourceTitle)}</span>
                                 ${item.subtopic ? `<span class="qz-src-badge">${this.escapeHtml(item.subtopic)}</span>` : ''}
                                 ${item._diseaseTitle && groupBy === 'source' ? `<span class="qz-src-badge is-ai">${this.escapeHtml(item._diseaseTitle)}</span>` : ''}
+                                ${ov ? `<span class="qz-src-badge is-custom">เฉลยแก้เอง</span>` : ''}
                               </div>
                               <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;">
                                 ${item._isResolved
@@ -3337,13 +3518,14 @@ ${this.escapeHtml(df.rawText)}
 
                             <div class="qz-wrong-exp">
                               <div class="qz-wrong-exp-label">เหตุผล &amp; จุดที่ควรจำ</div>
-                              <div class="qz-wrong-exp-body">${this.escapeHtml(item.explanation || `คำตอบที่ถูกต้องคือ ${rightTextList}`)}</div>
+                              <div class="qz-wrong-exp-body">${ov?.note ? `<div class="qz-custom-note-box"><strong>โน้ตของคุณ:</strong> ${this.escapeHtml(ov.note)}</div>` : ''}${this.escapeHtml(item.explanation || `คำตอบที่ถูกต้องคือ ${rightTextList}`)}</div>
                               ${this.buildDataRefHtml(item)}
                             </div>
 
                             <div class="qz-wrong-item-foot">
                               <span style="font-size:0.78rem; color:var(--qb-muted);">${item.pdfPage ? `หน้า PDF ${item.pdfPage}` : ''}</span>
                               <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
+                                <button type="button" class="qz-btn-soft" data-wrong-edit-key="${this.escapeHtml(item.id)}">${this.qzIcon('edit', 13)} ${ov ? 'แก้เฉลย (แก้แล้ว)' : 'แก้เฉลย'}</button>
                                 ${item._sourceHref ? `<a href="${item._sourceHref}" class="qz-btn-soft">เปิดดูในชุดเดิม</a>` : ''}
                                 <button type="button" class="qz-btn-outline" style="padding:0.36rem 0.8rem; font-size:0.81rem;" data-retry-wrong-one="${this.escapeHtml(item.id)}">
                                   ${this.qzIcon('reset', 13)} ลองทำข้อนี้ใหม่
@@ -3415,6 +3597,14 @@ ${this.escapeHtml(df.rawText)}
           const found = filteredItems.find(x => x.id === qid) || baseList.find(x => x.id === qid);
           if (found) {
             this.launchRetryWrongSession([found], `ทำใหม่ข้อที่ผิด · ${found._diseaseTitle || found._sourceTitle}`);
+          }
+        }));
+
+        tabBox.querySelectorAll('[data-wrong-edit-key]').forEach(b => b.addEventListener('click', () => {
+          const qid = b.getAttribute('data-wrong-edit-key');
+          const found = filteredItems.find(x => x.id === qid) || baseList.find(x => x.id === qid);
+          if (found) {
+            this.showEditKeyDialog(found, () => this.renderQuizHub(c));
           }
         }));
 
@@ -3709,23 +3899,30 @@ ${this.escapeHtml(df.rawText)}
       const selectedIdx = typeof ans[q.id] === 'number' ? ans[q.id] : null;
       const isAnswered = selectedIdx !== null;
       const showInstantReveal = isAnswered && (examMode === 'instant' || simSubmitted);
+      const ov = this.getKeyOverride(q);
       const validIndices = this.getQuestionCorrectIndices(q);
-      const isNoAnswer = q.answerSource === 'no_answer';
+      const isNoAnswer = q.answerSource === 'no_answer' && !ov;
       const isCorrect = isAnswered && this.isQuizChoiceCorrect(q, selectedIdx);
       const labels = q.optionLabels || ['ก', 'ข', 'ค', 'ง', 'จ'];
       const correctLabelsText = isNoAnswer
         ? 'ไม่มีคำตอบในเฉลย'
         : validIndices.map(i => labels[i] || (i + 1)).join(', ');
+      const origIndices = this.getOriginalCorrectIndices(q);
+      const origLabelsText = origIndices.length
+        ? origIndices.map(i => labels[i] || (i + 1)).join(', ')
+        : 'ไม่มีคำตอบในเฉลย';
 
       const visIdx = visibleQs.findIndex(x => x.displayNo === q.displayNo);
       const prevQ = visIdx > 0 ? visibleQs[visIdx - 1] : null;
       const nextQ = (visIdx >= 0 && visIdx + 1 < visibleQs.length) ? visibleQs[visIdx + 1] : null;
 
-      const ansTag = q.answerSource === 'no_answer'
-        ? `<span class="qz-src-badge is-warn">เฉลยระบุ: ไม่มีคำตอบ</span>`
-        : (q.answerSource === 'file'
-          ? `<span class="qz-src-badge is-file">เฉลยจากไฟล์</span>`
-          : (q.answerSource === 'ai' ? `<span class="qz-src-badge is-ai">AI เฉลยเทียบเนื้อหา</span>` : ''));
+      const ansTag = ov
+        ? `<span class="qz-src-badge is-custom">เฉลยแก้เอง (เดิม ${this.escapeHtml(origLabelsText)})</span>`
+        : (q.answerSource === 'no_answer'
+          ? `<span class="qz-src-badge is-warn">เฉลยระบุ: ไม่มีคำตอบ</span>`
+          : (q.answerSource === 'file'
+            ? `<span class="qz-src-badge is-file">เฉลยจากไฟล์</span>`
+            : (q.answerSource === 'ai' ? `<span class="qz-src-badge is-ai">AI เฉลยเทียบเนื้อหา</span>` : '')));
       const choiceTag = q.choiceSource === 'ai'
         ? `<span class="qz-src-badge is-ai">AI สร้างชอยส์</span>`
         : '';
@@ -3851,6 +4048,9 @@ ${this.escapeHtml(df.rawText)}
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;">
                   ${ansTag}${choiceTag}
+                  <button type="button" class="qz-btn-edit-key ${ov ? 'is-edited' : ''}" id="qzEditKeyBtn" title="แก้ไขเฉลยข้อนี้ด้วยตนเองและปรับคะแนนใหม่">
+                    ${this.qzIcon('edit', 13)} ${ov ? 'ปรับเฉลยแล้ว' : 'แก้เฉลย'}
+                  </button>
                 </div>
               </div>
 
@@ -3914,6 +4114,11 @@ ${this.escapeHtml(df.rawText)}
                     </div>
                   </div>
                   <div class="qz-feedback-body">
+                    ${ov ? `
+                      <div class="qz-custom-note-box">
+                        <strong>เฉลยที่คุณแก้ไข: ข้อ ${this.escapeHtml(correctLabelsText)}</strong> (เฉลยเดิม: ${this.escapeHtml(origLabelsText)})${ov.note ? `<div style="margin-top:0.2rem;">เหตุผลที่บันทึก: ${this.escapeHtml(ov.note)}</div>` : ''}
+                      </div>
+                    ` : ''}
                     ${this.escapeHtml(q.explanation || `เฉลยข้อ ${correctLabelsText}`)}
                     ${(q.expImages && q.expImages.length) ? `
                       <div class="qz-fig-wrap" style="margin-top: 0.75rem; margin-bottom: 0;">
@@ -4067,6 +4272,10 @@ ${this.escapeHtml(df.rawText)}
         delete getAnsStore()[q.id];
         if (!cfg.isRetryWrongSession) this.saveQuizAnswers();
         renderBody();
+      });
+
+      document.getElementById('qzEditKeyBtn')?.addEventListener('click', () => {
+        this.showEditKeyDialog(q, () => renderBody());
       });
 
       document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
