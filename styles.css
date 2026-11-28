@@ -5107,14 +5107,14 @@ button.qz-stat-pill.is-clickable:hover {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.22rem 0.62rem;
+  padding: 0.24rem 0.68rem;
   border-radius: 9999px;
-  border: 1px solid var(--qb-border-strong);
-  background: var(--qb-surface);
-  color: var(--qb-muted);
+  border: 1.5px solid var(--qb-blue);
+  background: var(--qb-blue-soft);
+  color: var(--qb-blue);
   font-family: var(--font-sans);
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: 0.76rem;
+  font-weight: 800;
   cursor: pointer;
   transition: all 0.14s ease;
 }
@@ -5122,8 +5122,8 @@ button.qz-stat-pill.is-clickable:hover {
 .qz-btn-edit-key:hover,
 .qz-btn-edit-key.is-edited {
   border-color: var(--qb-blue);
-  background: var(--qb-blue-soft);
-  color: var(--qb-blue);
+  background: var(--qb-blue);
+  color: #FFFFFF;
 }
 
 .qz-modal-card.is-wide {

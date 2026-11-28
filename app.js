@@ -4048,7 +4048,7 @@ ${this.escapeHtml(df.rawText)}
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;">
                   ${ansTag}${choiceTag}
-                  <button type="button" class="qz-btn-edit-key ${ov ? 'is-edited' : ''}" id="qzEditKeyBtn" title="แก้ไขเฉลยข้อนี้ด้วยตนเองและปรับคะแนนใหม่">
+                  <button type="button" class="qz-btn-edit-key ${ov ? 'is-edited' : ''}" id="qzEditKeyBtn" data-open-edit-key="1" title="แก้ไขเฉลยข้อนี้ด้วยตนเองและปรับคะแนนใหม่">
                     ${this.qzIcon('edit', 13)} ${ov ? 'ปรับเฉลยแล้ว' : 'แก้เฉลย'}
                   </button>
                 </div>
@@ -4110,6 +4110,9 @@ ${this.escapeHtml(df.rawText)}
                       ${(cfg.isRetryWrongSession && typeof cfg.prevWrongMap?.[q.id] === 'number')
                         ? `<span class="qz-src-badge is-warn">รอบก่อนเคยเลือกข้อ ${this.escapeHtml(labels[cfg.prevWrongMap[q.id]] || String(cfg.prevWrongMap[q.id] + 1))}</span>`
                         : ''}
+                      <button type="button" class="qz-btn-edit-key ${ov ? 'is-edited' : ''}" data-open-edit-key="1" style="font-size: 0.78rem; padding: 0.24rem 0.68rem;">
+                        ${this.qzIcon('edit', 13)} ${ov ? 'ปรับเฉลยแล้ว' : 'แก้เฉลยข้อนี้'}
+                      </button>
                       ${examMode === 'instant' ? `<button type="button" class="qz-btn-soft" id="qzRetryOneBtn" style="font-size: 0.78rem; padding: 0.24rem 0.62rem;">ทำใหม่ข้อนี้</button>` : ''}
                     </div>
                   </div>
@@ -4274,8 +4277,10 @@ ${this.escapeHtml(df.rawText)}
         renderBody();
       });
 
-      document.getElementById('qzEditKeyBtn')?.addEventListener('click', () => {
-        this.showEditKeyDialog(q, () => renderBody());
+      c.querySelectorAll('[data-open-edit-key]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.showEditKeyDialog(q, () => renderBody());
+        });
       });
 
       document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
