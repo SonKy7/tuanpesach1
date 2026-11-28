@@ -2100,6 +2100,115 @@ ${this.escapeHtml(df.rawText)}
     return `${mm}:${ss}`;
   },
 
+  showQuizResetDialog({ title, subtitle = '', actions = [] }) {
+    document.getElementById('qzResetModalOverlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'qzResetModalOverlay';
+    overlay.className = 'qz-modal-backdrop';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+
+    const closeModal = () => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKey);
+
+    const renderStep = (confirmAct = null) => {
+      if (confirmAct) {
+        overlay.innerHTML = `
+          <div class="qz-modal-card">
+            <div class="qz-modal-head">
+              <div class="qz-modal-icon is-danger">${this.qzIcon('reset', 20)}</div>
+              <div>
+                <h3 class="qz-modal-title">${this.escapeHtml(confirmAct.confirmTitle || 'ยืนยันการล้างข้อมูลอีกครั้ง')}</h3>
+                ${confirmAct.confirmSubtitle ? `<p class="qz-modal-sub">${this.escapeHtml(confirmAct.confirmSubtitle)}</p>` : ''}
+              </div>
+            </div>
+            <div class="qz-modal-actions-row">
+              <button type="button" class="qz-btn-soft" id="qzModalBackBtn">ย้อนกลับ</button>
+              <button type="button" class="qz-btn-danger-solid" id="qzModalConfirmBtn">${this.escapeHtml(confirmAct.confirmBtnText || 'ยืนยัน ล้างข้อมูล')}</button>
+            </div>
+          </div>
+        `;
+        document.getElementById('qzModalBackBtn')?.addEventListener('click', () => {
+          if (actions.length === 1) closeModal();
+          else renderStep(null);
+        });
+        document.getElementById('qzModalConfirmBtn')?.addEventListener('click', () => {
+          closeModal();
+          confirmAct.onConfirm?.();
+        });
+        return;
+      }
+
+      overlay.innerHTML = `
+        <div class="qz-modal-card">
+          <div class="qz-modal-head">
+            <div class="qz-modal-icon">${this.qzIcon('reset', 20)}</div>
+            <div>
+              <h3 class="qz-modal-title">${this.escapeHtml(title)}</h3>
+              ${subtitle ? `<p class="qz-modal-sub">${this.escapeHtml(subtitle)}</p>` : ''}
+            </div>
+          </div>
+          <div class="qz-modal-choice-list">
+            ${actions.map((act, idx) => `
+              <button type="button" class="qz-modal-choice ${act.variant === 'danger' ? 'is-danger' : ''}" data-modal-act="${idx}">
+                <span class="qz-modal-choice-label">${this.escapeHtml(act.label)}</span>
+                ${act.hint ? `<span class="qz-modal-choice-hint">${this.escapeHtml(act.hint)}</span>` : ''}
+              </button>
+            `).join('')}
+          </div>
+          <div class="qz-modal-actions-row" style="margin-top:0.85rem;">
+            <button type="button" class="qz-btn-soft" id="qzModalCancelBtn" style="width:100%; justify-content:center;">ยกเลิก</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('qzModalCancelBtn')?.addEventListener('click', closeModal);
+      overlay.querySelectorAll('[data-modal-act]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const act = actions[parseInt(btn.getAttribute('data-modal-act'), 10)];
+          if (!act) return;
+          if (act.requireConfirm) {
+            renderStep(act);
+          } else {
+            closeModal();
+            act.onConfirm?.();
+          }
+        });
+      });
+    };
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+    document.body.appendChild(overlay);
+    renderStep(actions.length === 1 && actions[0].requireConfirm ? actions[0] : null);
+  },
+
+  confirmDeckReset(deckTitle, questions, onDone) {
+    const qs = questions || [];
+    const doneCnt = qs.filter(q => typeof this.state.quizAnswers?.[q.id] === 'number').length;
+    if (!doneCnt) return;
+    this.showQuizResetDialog({
+      title: `รีเซ็ต: ${deckTitle}`,
+      actions: [{
+        label: `ล้างคำตอบทั้งหมด ${doneCnt} ข้อในชุดนี้`,
+        variant: 'danger',
+        requireConfirm: true,
+        confirmTitle: `ยืนยันรีเซ็ต "${deckTitle}"?`,
+        confirmSubtitle: `ประวัติคำตอบและคะแนนที่ทำไว้ ${doneCnt} ข้อในชุดนี้จะถูกล้างทั้งหมด`,
+        confirmBtnText: `ยืนยัน รีเซ็ต ${doneCnt} ข้อ`,
+        onConfirm: () => {
+          qs.forEach(q => { delete this.state.quizAnswers[q.id]; });
+          this.saveQuizAnswers();
+          onDone?.();
+        }
+      }]
+    });
+  },
+
   formatCaseHtml(raw) {
     if (!raw || typeof raw !== 'string') return '';
     const lines = raw.replace(/\r\n?/g, '\n').split('\n').map(s => s.trim()).filter(Boolean);
@@ -2466,9 +2575,7 @@ ${this.escapeHtml(df.rawText)}
           const cid = btn.getAttribute('data-qz-clear-ch');
           const targetCh = chapters.find(x => x.id === cid);
           if (!targetCh) return;
-          targetCh.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
-          this.saveQuizAnswers();
-          this.renderQuizHub(c);
+          this.confirmDeckReset(`บทที่ ${targetCh.chapterNum}. ${targetCh.title}`, targetCh.questions, () => this.renderQuizHub(c));
         });
       });
     };
@@ -2704,17 +2811,13 @@ ${this.escapeHtml(df.rawText)}
           const did = btn.getAttribute('data-dis-reset-id');
           const d = diseases.find(x => x.id === did);
           if (!d) return;
-          d.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
-          this.saveQuizAnswers();
-          this.renderQuizHub(c);
+          this.confirmDeckReset(d.title, d.questions, () => this.renderQuizHub(c));
         }));
         tabBox.querySelectorAll('[data-dis-reset-grp]').forEach(btn => btn.addEventListener('click', () => {
           const gid = btn.getAttribute('data-dis-reset-grp');
           const g = groups.find(x => x.id === gid);
           if (!g) return;
-          g.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
-          this.saveQuizAnswers();
-          this.renderQuizHub(c);
+          this.confirmDeckReset(g.title, g.questions, () => this.renderQuizHub(c));
         }));
       };
 
@@ -2818,9 +2921,7 @@ ${this.escapeHtml(df.rawText)}
           const yid = btn.getAttribute('data-yr-clear');
           const yr = years.find(x => x.id === yid);
           if (!yr) return;
-          yr.questions.forEach(q => { delete this.state.quizAnswers[q.id]; });
-          this.saveQuizAnswers();
-          this.renderQuizHub(c);
+          this.confirmDeckReset(yr.title, yr.questions, () => this.renderQuizHub(c));
         });
       });
     };
@@ -3326,11 +3427,26 @@ ${this.escapeHtml(df.rawText)}
 
         document.getElementById('qzClearResolvedBtn')?.addEventListener('click', () => {
           if (!this.state.quizWrongHistory) return;
-          Object.keys(this.state.quizWrongHistory).forEach(id => {
-            if (this.state.quizWrongHistory[id]?.resolved) delete this.state.quizWrongHistory[id];
+          const resCount = Object.values(this.state.quizWrongHistory).filter(x => x?.resolved).length;
+          if (!resCount) return;
+          this.showQuizResetDialog({
+            title: 'ล้างประวัติข้อที่แก้ถูกแล้ว',
+            actions: [{
+              label: `ล้าง ${resCount} ข้อ`,
+              variant: 'danger',
+              requireConfirm: true,
+              confirmTitle: `ยืนยันล้างประวัติข้อที่แก้ถูกแล้ว (${resCount} ข้อ)?`,
+              confirmSubtitle: 'ข้อที่ยังตอบผิดอยู่จะยังคงแสดงในหมวดข้อที่เคยผิดตามเดิม',
+              confirmBtnText: `ยืนยัน ล้าง ${resCount} ข้อ`,
+              onConfirm: () => {
+                Object.keys(this.state.quizWrongHistory).forEach(id => {
+                  if (this.state.quizWrongHistory[id]?.resolved) delete this.state.quizWrongHistory[id];
+                });
+                this.saveQuizWrongHistory();
+                paintWrongView();
+              }
+            }]
           });
-          this.saveQuizWrongHistory();
-          paintWrongView();
         });
 
         document.getElementById('qzClearWrongFilterBtn')?.addEventListener('click', () => {
@@ -3386,12 +3502,25 @@ ${this.escapeHtml(df.rawText)}
     });
 
     document.getElementById('qzResetAllBtn')?.addEventListener('click', () => {
-      if (!window.confirm('ต้องการล้างประวัติการทำข้อสอบทั้งหมดใช่หรือไม่?')) return;
-      this.state.quizAnswers = {};
-      this.state.quizWrongHistory = {};
-      this.saveQuizAnswers();
-      this.saveQuizWrongHistory();
-      this.renderQuizHub(c);
+      const doneTotal = Object.keys(this.state.quizAnswers || {}).length;
+      this.showQuizResetDialog({
+        title: 'ล้างประวัติทั้งหมด',
+        actions: [{
+          label: `ล้างทุกข้อทั้งหมด (${doneTotal} ข้อ)`,
+          variant: 'danger',
+          requireConfirm: true,
+          confirmTitle: 'ยืนยันอีกครั้ง: ล้างประวัติทั้งหมดทุกชุด?',
+          confirmSubtitle: `คำตอบที่ทำไว้ทั้งหมด ${doneTotal} ข้อ และหมวดข้อที่เคยผิดจะถูกล้างออกทั้งหมด`,
+          confirmBtnText: 'ยืนยัน ล้างข้อมูลทั้งหมด',
+          onConfirm: () => {
+            this.state.quizAnswers = {};
+            this.state.quizWrongHistory = {};
+            this.saveQuizAnswers();
+            this.saveQuizWrongHistory();
+            this.renderQuizHub(c);
+          }
+        }]
+      });
     });
 
     renderActiveTab();
@@ -3942,14 +4071,52 @@ ${this.escapeHtml(df.rawText)}
 
       document.getElementById('qzClearChRunnerBtn')?.addEventListener('click', () => {
         const store = getAnsStore();
-        qs.forEach(item => { delete store[item.id]; });
-        if (examMode === 'instant' && !cfg.isRetryWrongSession) this.saveQuizAnswers();
-        simSubmitted = false;
-        if (sessionObj) sessionObj.simSubmitted = false;
-        filterMode = 'all';
-        this.state.quizFilter = 'all';
-        currentPos = 1;
-        renderBody();
+        const curAnswered = typeof store[q.id] === 'number';
+        const actions = [];
+        if (curAnswered) {
+          actions.push({
+            label: `ล้างเฉพาะข้อนี้ (ข้อ ${q.displayNo})`,
+            hint: 'ลบเฉพาะคำตอบของข้อที่แสดงอยู่ตอนนี้เพื่อลองทำใหม่',
+            variant: 'outline',
+            requireConfirm: true,
+            confirmTitle: `ยืนยันล้างเฉพาะข้อ ${q.displayNo}?`,
+            confirmSubtitle: 'คำตอบข้ออื่นในชุดนี้จะยังอยู่ครบเหมือนเดิม',
+            confirmBtnText: `ยืนยัน ล้างข้อ ${q.displayNo}`,
+            onConfirm: () => {
+              delete getAnsStore()[q.id];
+              if (examMode === 'instant' && !cfg.isRetryWrongSession) this.saveQuizAnswers();
+              renderBody();
+            }
+          });
+        }
+        actions.push({
+          label: `ล้างทุกข้อในชุดนี้ (${st.done} ข้อที่ทำไว้)`,
+          hint: 'รีเซ็ตคำตอบทั้งหมดในชุดข้อสอบนี้กลับเป็นยังไม่ทำ',
+          variant: 'danger',
+          requireConfirm: true,
+          confirmTitle: `ยืนยันอีกครั้ง: ล้างทุกข้อ (${st.done} ข้อ)?`,
+          confirmSubtitle: `คำตอบที่ทำไว้ทั้งหมด ${st.done} ข้อใน "${cfg.title}" จะถูกล้างออก`,
+          confirmBtnText: `ยืนยัน ล้างทั้งหมด ${st.done} ข้อ`,
+          onConfirm: () => {
+            const s = getAnsStore();
+            qs.forEach(item => { delete s[item.id]; });
+            if (examMode === 'instant' && !cfg.isRetryWrongSession) this.saveQuizAnswers();
+            simSubmitted = false;
+            if (sessionObj) sessionObj.simSubmitted = false;
+            filterMode = 'all';
+            this.state.quizFilter = 'all';
+            currentPos = 1;
+            renderBody();
+          }
+        });
+
+        this.showQuizResetDialog({
+          title: 'ต้องการล้างคำตอบแบบใด?',
+          subtitle: curAnswered
+            ? 'เลือกได้ว่าจะล้างเฉพาะข้อนี้หรือล้างทั้งชุด (มีขั้นตอนยืนยันอีกครั้งกันมือลั่น)'
+            : `ข้อนี้ยังไม่ได้ตอบ สามารถล้างคำตอบที่ทำไว้ ${st.done} ข้อในชุดนี้ได้`,
+          actions
+        });
       });
 
       document.getElementById('qzPrevBtn')?.addEventListener('click', () => {
